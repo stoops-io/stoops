@@ -291,7 +291,7 @@ export async function serve(options: ServeOptions): Promise<void> {
     stoops run claude --room ${roomName} --name agent
 `);
     console.log(`[${formatTimestamp(new Date())}] Room "${roomName}" created`);
-    console.log(`[${formatTimestamp(new Date())}] 👤 you joined`);
+    console.log(`[${formatTimestamp(new Date())}] [human] you joined`);
   });
 
   // ── Human readline ──────────────────────────────────────────────────────

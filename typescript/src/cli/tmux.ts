@@ -55,7 +55,12 @@ export function tmuxSendEnter(session: string): void {
 
 /** Attach to a tmux session (blocks until detach or session ends). */
 export function tmuxAttach(session: string): void {
-  execSync(`tmux attach -t ${shellEscape(session)}`, { stdio: "inherit" });
+  // If already inside tmux, use switch-client instead of attach (attach refuses when nested).
+  if (process.env.TMUX) {
+    execSync(`tmux switch-client -t ${shellEscape(session)}`, { stdio: "inherit" });
+  } else {
+    execSync(`tmux attach -t ${shellEscape(session)}`, { stdio: "inherit" });
+  }
 }
 
 /** Kill a tmux session. */

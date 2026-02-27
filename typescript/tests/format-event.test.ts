@@ -93,10 +93,8 @@ describe("MessageSent formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    // No room label prefix — text should NOT contain a "[RoomName]" bracket pair
-    // (timestamps use brackets too, e.g. [12:00:00], but there's no room label)
-    expect(text).not.toMatch(/\] \[/); // no "] [" which would indicate room label after timestamp
-    // But should still have the participant label and content
+    // No room label — output goes straight from timestamp to participant label
+    expect(text).not.toMatch(/\[\d{2}:\d{2}:\d{2}\] \[(?!human\]|agent\])/);
     expect(text).toContain("Alice");
     expect(text).toContain("hi");
   });
@@ -148,7 +146,7 @@ describe("MessageSent formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    expect(text).toContain("agent Quinn");
+    expect(text).toContain("[agent] Quinn");
   });
 
   test("unknown sender falls back to sender_name from message", () => {
@@ -387,7 +385,7 @@ describe("ParticipantJoined/Left formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    expect(text).toContain("agent Quinn");
+    expect(text).toContain("[agent] Quinn");
     expect(text).toContain("joined the chat");
   });
 
@@ -418,9 +416,8 @@ describe("ParticipantJoined/Left formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    // No room label prefix — timestamps still use brackets, but there should be
-    // no second bracket pair for a room label
-    expect(text).not.toMatch(/\] \[/);
+    // No room label — output goes straight from timestamp to participant label
+    expect(text).not.toMatch(/\[\d{2}:\d{2}:\d{2}\] \[(?!human\]|agent\])/);
     expect(text).toContain("left the chat");
   });
 });
@@ -550,8 +547,8 @@ describe("ContextCompacted formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    // No room label prefix — timestamps still use brackets, but no room label
-    expect(text).not.toMatch(/\] \[/);
+    // No room label — output goes straight from timestamp to participant label
+    expect(text).not.toMatch(/\[\d{2}:\d{2}:\d{2}\] \[(?!human\]|agent\])/);
     expect(text).toContain("memory was refreshed");
   });
 });
@@ -678,11 +675,11 @@ describe("helper functions", () => {
   });
 
   test("participantLabel shows 'human' for humans", () => {
-    expect(participantLabel(alice)).toBe("human Alice");
+    expect(participantLabel(alice)).toBe("[human] Alice");
   });
 
   test("participantLabel shows 'agent' for agent type", () => {
-    expect(participantLabel(quinn)).toBe("agent Quinn");
+    expect(participantLabel(quinn)).toBe("[agent] Quinn");
   });
 
   test("participantLabel returns fallback for null", () => {

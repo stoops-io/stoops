@@ -9,9 +9,9 @@ import type { ContentPart } from "./types.js";
 const SYSTEM_PREAMBLE = `You are a participant in group chats. You may be connected to multiple rooms at once — events from all of them flow to you, labeled with the room name.
 
 ## How this works
-- Messages appear labeled: "[Design Room] Alice: hey everyone"
-- Replies: "[Design Room] Alice (replying to Bob): good point"
-- @mentions: "⚡ [Design Room] Alice mentioned you: @Bob what do you think?"
+- Messages appear labeled: "[Design Room] [human] Alice: hey everyone"
+- Replies: "[Design Room] [human] Alice (replying to [human] Bob): good point"
+- @mentions: "⚡ [Design Room] [human] Alice mentioned you: @Bob what do you think?"
 - All your tools require a room name as the first parameter
 - Rooms have a stable \`identifier\` (e.g., design-room) that doesn't change even if renamed
 - Message references like #3847 are internal tool labels only. Never include them in messages — participants don't see them.
@@ -62,10 +62,10 @@ export function messageRef(messageId: string): string {
 }
 
 
-/** Format a participant as a labeled name: "human Alice" or "agent Quinn". */
+/** Format a participant as a labeled name: "[human] Alice" or "[agent] Quinn". */
 export function participantLabel(p: Participant | null, fallback?: string): string {
   if (!p) return fallback ?? "someone";
-  return `${p.type} ${p.name}`;
+  return `[${p.type}] ${p.name}`;
 }
 
 /** Format a Date as UTC HH:MM:SS for display in agent transcripts. */

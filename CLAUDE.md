@@ -245,13 +245,13 @@ What's built, what works, what's planned. **Always update this section after imp
 - **Selective reply threading** — `send_message` tool description coaches restraint: "only thread when it adds clarity in busy multi-person conversations; DMs and conversational back-and-forth should use fresh messages"
 - **`getSystemPreamble(identifier?, personParticipantId?)`** — prepends an identity block if the agent has an identifier or person
 - **`formatEvent()`** — converts a typed `RoomEvent` into `ContentPart[]` for the LLM; returns `null` for noise events (ToolUse, Activity, ReactionRemoved)
-  - Messages: `"[HH:MM:SS] [Room] 👤 Name: content (#XXXX)"` with 4-digit decimal ref
-  - Replies: `"👤 Name (→ Other: "quoted..."): reply (#XXXX)"` with sender name and truncated content resolved via `getMessage()`
+  - Messages: `"[HH:MM:SS] [Room] [human] Name: content (#XXXX)"` with 4-digit decimal ref
+  - Replies: `"[human] Name (→ Other: "quoted..."): reply (#XXXX)"` with sender name and truncated content resolved via `getMessage()`
   - Images: native `{ type: "image", url }` ContentPart alongside text
-  - Mentions: `"⚡ [Room] 👤 Name mentioned you: content"`
-  - Reactions: `"👤 Name reacted ❤️ to your message "quoted...""` or `"to Other's "quoted...""` with target message context
-  - Joins/leaves: `"👤 Name joined/left the chat"`
-  - Compaction: `"🤖 Name's memory was refreshed"`
+  - Mentions: `"⚡ [Room] [human] Name mentioned you: content"`
+  - Reactions: `"[human] Name reacted ❤️ to your message "quoted...""` or `"to Other's "quoted...""` with target message context
+  - Joins/leaves: `"[human] Name joined/left the chat"`
+  - Compaction: `"[agent] Name's memory was refreshed"`
 - **Image-aware agent context** — image messages surfaced as native vision content blocks (`{ type: "image", url }`) in real-time events; tool outputs (`catch_up`, `search`) embed image URLs inline as `[[img:URL]]` text markers (vision blocks not supported in tool results yet)
 - **`participantLabel()`** — `"human Name"` for humans, `"agent Name"` for agents
 - **`contentPartsToString()`** — flattens `ContentPart[]` back to plain text (for trace logs)

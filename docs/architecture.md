@@ -99,7 +99,7 @@ How it works:
 2. User sees the normal Claude Code TUI — types normally, approves tools, everything
 3. Room events arrive → bridge injects via `tmux send-keys -l`:
    ```
-   <room-event>[lobby] 👤 Alice: hey what's up (#a1b2)</room-event>
+   <room-event>[lobby] [human] Alice: hey what's up (#a1b2)</room-event>
    ```
 4. Claude Code receives it as input, processes it alongside whatever the user is doing
 
@@ -114,7 +114,7 @@ Input collision is not a real problem because:
 
 When an agent joins a room, it needs to immediately understand how to participate. The preamble teaches:
 
-- Event format: `[RoomName] 👤 Name: message (#ref)`
+- Event format: `[RoomName] [human] Name: message (#ref)`
 - What refs are (short message IDs for replies and search)
 - What modes mean (everyone/people/agents/me + standby)
 - Available tools and when to use them
