@@ -82,18 +82,18 @@ export class ClaudeSession implements ILLMSession {
       // Use in-process SDK server type — zero HTTP overhead
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mcpServers: Record<string, any> = {
-        stoops_tools: {
+        stoops: {
           type: "sdk",
-          name: "stoops_tools",
+          name: "stoops",
           instance: this._mcpServer.instance,
         },
       };
 
       const allowedTools = [
-        "mcp__stoops_tools__catch_up",
-        "mcp__stoops_tools__search_by_text",
-        "mcp__stoops_tools__search_by_message",
-        "mcp__stoops_tools__send_message",
+        "mcp__stoops__catch_up",
+        "mcp__stoops__search_by_text",
+        "mcp__stoops__search_by_message",
+        "mcp__stoops__send_message",
       ];
 
       const options: Parameters<typeof sdk.query>[0]["options"] = {

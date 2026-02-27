@@ -35,31 +35,14 @@ export interface StoopsMcpServer {
   stop: () => Promise<void>;
 }
 
-/**
- * Start a full stoops MCP server (all 4 tools).
- * Call once per session start; call stop() on session stop.
- */
-export async function createFullMcpServer(
-  resolver: RoomResolver,
-  options: ToolHandlerOptions,
-): Promise<StoopsMcpServer> {
-  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-  const { StreamableHTTPServerTransport } = await import(
-    "@modelcontextprotocol/sdk/server/streamableHttp.js"
-  );
-
-  // ── Build McpServer with all 4 tools ─────────────────────────────────────
-
-  const server = new McpServer(
-    { name: "stoops_tools", version: "1.0.0" },
-  );
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function registerTools(server: any, resolver: RoomResolver, options: ToolHandlerOptions): void {
   server.tool(
     "catch_up",
     "Catch up on recent activity in a room. Returns unseen events, oldest first.",
     { room: z.string().describe("Name of the room to catch up on") },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async ({ room }) => handleCatchUp(resolver, { room }, options) as any,
+    async ({ room }: { room: string }) => handleCatchUp(resolver, { room }, options) as any,
   );
 
   server.tool(
@@ -73,7 +56,7 @@ export async function createFullMcpServer(
       cursor: z.string().optional().describe("Pagination cursor from a previous search"),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async (args) => handleSearchByText(resolver, args, options) as any,
+    async (args: any) => handleSearchByText(resolver, args, options) as any,
   );
 
   server.tool(
@@ -88,7 +71,7 @@ export async function createFullMcpServer(
         .describe("Number of messages to return (not counting anchor, default 10)"),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async (args) => handleSearchByMessage(resolver, args, options) as any,
+    async (args: any) => handleSearchByMessage(resolver, args, options) as any,
   );
 
   server.tool(
@@ -105,27 +88,48 @@ export async function createFullMcpServer(
         .describe("Size of the image in bytes"),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async (args) => handleSendMessage(resolver, args, options) as any,
+    async (args: any) => handleSendMessage(resolver, args, options) as any,
   );
+}
+
+/**
+ * Start a full stoops MCP server (all 4 tools).
+ * Call once per session start; call stop() on session stop.
+ */
+export async function createFullMcpServer(
+  resolver: RoomResolver,
+  options: ToolHandlerOptions,
+): Promise<StoopsMcpServer> {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { StreamableHTTPServerTransport } = await import(
+    "@modelcontextprotocol/sdk/server/streamableHttp.js"
+  );
+
+  // Singleton instance for Claude SDK in-process shortcut.
+  const instance = new McpServer({ name: "stoops", version: "1.0.0" });
+  registerTools(instance, resolver, options);
 
   // ── Start HTTP server on random port ─────────────────────────────────────
 
-  // One transport per connection (stateless mode — no session IDs needed since
-  // each stoop session is independent and state lives in the McpServer handlers).
   const httpServer = createServer(async (req, res) => {
     if (req.url !== "/mcp") {
       res.writeHead(404).end();
       return;
     }
 
-    // Stateless mode: fresh transport per request, no session tracking needed
+    // Fresh McpServer per request — McpServer only allows one active transport
+    // at a time, so reusing the singleton across requests causes "Already connected"
+    // errors. Tool registration is cheap; creating per-request is the correct pattern
+    // for stateless HTTP MCP.
+    const reqServer = new McpServer({ name: "stoops", version: "1.0.0" });
+    registerTools(reqServer, resolver, options);
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
     });
 
-    await server.connect(transport);
+    await reqServer.connect(transport);
 
-    // Collect body for POST requests
     let body: unknown;
     if (req.method === "POST") {
       const chunks: Buffer[] = [];
@@ -157,5 +161,5 @@ export async function createFullMcpServer(
     return stopPromise;
   };
 
-  return { url, instance: server, stop };
+  return { url, instance, stop };
 }

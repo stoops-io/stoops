@@ -1,11 +1,12 @@
 /**
  * stoops run claude — connect a Claude Code instance to a room.
  *
- * Thin client: registers with the stoops server, sets up MCP in Claude Code,
- * creates a tmux session, and blocks until the user exits.
+ * Thin client: registers with the stoops server, launches Claude in tmux
+ * with the stoops MCP server configured via --mcp-config (session-scoped,
+ * nothing written to ~/.claude.json).
  */
 
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   tmuxAvailable,
   tmuxCreateSession,
@@ -19,8 +20,6 @@ export interface RunClaudeOptions {
   room: string;
   name?: string;
   server?: string;
-  /** "full" gives the agent all 4 MCP tools (catch_up, search, send_message). Default is lite (send_message + snapshot_room). */
-  mcp?: "full";
 }
 
 export async function runClaude(options: RunClaudeOptions): Promise<void> {
@@ -45,7 +44,7 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
     const res = await fetch(`${serverUrl}/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ room: options.room, name: agentName, mcp: options.mcp }),
+      body: JSON.stringify({ room: options.room, name: agentName }),
     });
 
     if (!res.ok) {
@@ -68,31 +67,22 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
 
   console.log(`  Joined as ${agentName} (${agentId})`);
 
-  // ── Add MCP server to Claude Code ───────────────────────────────────────
-
-  const mcpName = `stoops_${options.room}_${agentName}`;
-
-  console.log("Adding MCP server...");
-  try {
-    execFileSync("claude", ["mcp", "add", "--transport", "http", "--scope", "user", mcpName, mcpUrl], { stdio: "ignore" });
-  } catch (err) {
-    console.error("Failed to add MCP server to Claude Code. Is `claude` installed?");
-    await disconnect(serverUrl, agentId);
-    process.exit(1);
-  }
-
   // ── Create tmux session ─────────────────────────────────────────────────
 
   const tmuxSession = `stoops_${options.room}_${agentName}`;
 
-  // Clean up stale session if it exists
   if (tmuxSessionExists(tmuxSession)) {
     tmuxKillSession(tmuxSession);
   }
 
+  // Build --mcp-config JSON — session-scoped, never saved to ~/.claude.json
+  const mcpConfig = JSON.stringify({
+    mcpServers: { stoops: { type: "http", url: mcpUrl } },
+  });
+
   console.log("Launching Claude Code...");
   tmuxCreateSession(tmuxSession);
-  tmuxSendCommand(tmuxSession, "claude");
+  tmuxSendCommand(tmuxSession, `claude --mcp-config '${mcpConfig}'`);
 
   // ── Tell server about our tmux session ──────────────────────────────────
 
@@ -104,13 +94,12 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
     });
   } catch {
     console.error("Failed to notify server about tmux session.");
-    await cleanup(serverUrl, agentId, mcpName, tmuxSession);
+    await cleanup(serverUrl, agentId, tmuxSession);
     process.exit(1);
   }
 
   // ── Wait for Claude Code to be ready, then attach ───────────────────────
 
-  // Give Claude Code a moment to start up
   await new Promise((r) => setTimeout(r, 2000));
 
   console.log("Attaching to Claude Code session...\n");
@@ -123,11 +112,11 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
 
   // ── Cleanup ─────────────────────────────────────────────────────────────
 
-  await cleanup(serverUrl, agentId, mcpName, tmuxSession);
+  await cleanup(serverUrl, agentId, tmuxSession);
   console.log("Disconnected.");
 }
 
-async function disconnect(serverUrl: string, agentId: string): Promise<void> {
+async function cleanup(serverUrl: string, agentId: string, tmuxSession: string): Promise<void> {
   try {
     await fetch(`${serverUrl}/disconnect`, {
       method: "POST",
@@ -137,24 +126,6 @@ async function disconnect(serverUrl: string, agentId: string): Promise<void> {
   } catch {
     // Server may be down
   }
-}
 
-async function cleanup(
-  serverUrl: string,
-  agentId: string,
-  mcpName: string,
-  tmuxSession: string,
-): Promise<void> {
-  // Disconnect from server
-  await disconnect(serverUrl, agentId);
-
-  // Remove MCP server from Claude Code config
-  try {
-    execFileSync("claude", ["mcp", "remove", mcpName], { stdio: "ignore" });
-  } catch {
-    // May already be removed
-  }
-
-  // Kill tmux session
   tmuxKillSession(tmuxSession);
 }

@@ -77,31 +77,31 @@ describe("room connection / disconnection", () => {
     const proc = makeProcessor();
     const room = makeRoom();
 
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     // Resolve by name
-    const conn = proc.resolve("kitchen");
+    const conn = proc.resolve("lobby");
     expect(conn).not.toBeNull();
     expect(conn!.room.roomId).toBe("room-1");
-    expect(conn!.name).toBe("kitchen");
+    expect(conn!.name).toBe("lobby");
   });
 
   test("connectRoom with identifier makes room resolvable by identifier", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
 
-    await proc.connectRoom(room, "Kitchen Crew", undefined, "kitchen-crew");
+    await proc.connectRoom(room, "Lobby Crew", undefined, "lobby-crew");
 
-    expect(proc.resolve("kitchen-crew")).not.toBeNull();
-    expect(proc.resolve("Kitchen Crew")).not.toBeNull();
+    expect(proc.resolve("lobby-crew")).not.toBeNull();
+    expect(proc.resolve("Lobby Crew")).not.toBeNull();
   });
 
   test("connectRoom is idempotent for the same room", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
 
-    await proc.connectRoom(room, "kitchen");
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
+    await proc.connectRoom(room, "lobby");
 
     const all = proc.listAll();
     expect(all).toHaveLength(1);
@@ -114,7 +114,7 @@ describe("room connection / disconnection", () => {
     // Drain any join event from the human connecting
     await humanCh.receive(10);
 
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     // The human may receive Activity events (mode_changed), but should NOT
     // receive a ParticipantJoined event for the agent.
@@ -132,11 +132,11 @@ describe("room connection / disconnection", () => {
     const proc = makeProcessor();
     const room = makeRoom();
 
-    await proc.connectRoom(room, "kitchen", undefined, "kitchen-id");
+    await proc.connectRoom(room, "lobby", undefined, "lobby-id");
     await proc.disconnectRoom(room.roomId);
 
-    expect(proc.resolve("kitchen")).toBeNull();
-    expect(proc.resolve("kitchen-id")).toBeNull();
+    expect(proc.resolve("lobby")).toBeNull();
+    expect(proc.resolve("lobby-id")).toBeNull();
     expect(proc.resolve(room.roomId)).toBeNull();
     expect(proc.listAll()).toHaveLength(0);
   });
@@ -152,23 +152,23 @@ describe("room connection / disconnection", () => {
     const room1 = makeRoom("room-1");
     const room2 = makeRoom("room-2");
 
-    await proc.connectRoom(room1, "kitchen");
+    await proc.connectRoom(room1, "lobby");
     await proc.connectRoom(room2, "living-room");
 
     expect(proc.listAll()).toHaveLength(2);
-    expect(proc.resolve("kitchen")).not.toBeNull();
+    expect(proc.resolve("lobby")).not.toBeNull();
     expect(proc.resolve("living-room")).not.toBeNull();
   });
 
   test("stop disconnects all rooms and clears state", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     await proc.stop();
 
     expect(proc.listAll()).toHaveLength(0);
-    expect(proc.resolve("kitchen")).toBeNull();
+    expect(proc.resolve("lobby")).toBeNull();
   });
 });
 
@@ -180,7 +180,7 @@ describe("event deduplication", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room);
 
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
     const collector = makeDeliveryCollector();
 
     // Start the event loop in the background
@@ -209,7 +209,7 @@ describe("event deduplication", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room);
 
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
     const collector = makeDeliveryCollector();
 
     const runPromise = proc.run(collector.deliver);
@@ -238,7 +238,7 @@ describe("mode management", () => {
   test("default mode is used when no per-room override", async () => {
     const proc = makeProcessor({ defaultMode: "people" });
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     expect(proc.getModeForRoom(room.roomId)).toBe("people");
   });
@@ -246,7 +246,7 @@ describe("mode management", () => {
   test("connectRoom with explicit mode sets per-room mode", async () => {
     const proc = makeProcessor({ defaultMode: "everyone" });
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen", "agents");
+    await proc.connectRoom(room, "lobby", "agents");
 
     expect(proc.getModeForRoom(room.roomId)).toBe("agents");
   });
@@ -254,7 +254,7 @@ describe("mode management", () => {
   test("setModeForRoom updates the mode", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     proc.setModeForRoom(room.roomId, "me", false);
 
@@ -267,19 +267,19 @@ describe("mode management", () => {
       onModeChange: (roomId, roomName, mode) => changes.push({ roomId, roomName, mode }),
     });
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     proc.setModeForRoom(room.roomId, "standby-everyone", false);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0].roomName).toBe("kitchen");
+    expect(changes[0].roomName).toBe("lobby");
     expect(changes[0].mode).toBe("standby-everyone");
   });
 
   test("disconnectRoom cleans up per-room mode", async () => {
     const proc = makeProcessor({ defaultMode: "everyone" });
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen", "agents");
+    await proc.connectRoom(room, "lobby", "agents");
     expect(proc.getModeForRoom(room.roomId)).toBe("agents");
 
     await proc.disconnectRoom(room.roomId);
@@ -293,11 +293,11 @@ describe("mode management", () => {
     const room1 = makeRoom("room-1");
     const room2 = makeRoom("room-2");
 
-    await proc.connectRoom(room1, "kitchen", "people");
+    await proc.connectRoom(room1, "lobby", "people");
     await proc.connectRoom(room2, "lounge");
 
     const all = proc.listAll();
-    const kitchenEntry = all.find((r) => r.name === "kitchen");
+    const kitchenEntry = all.find((r) => r.name === "lobby");
     const loungeEntry = all.find((r) => r.name === "lounge");
 
     expect(kitchenEntry?.mode).toBe("people");
@@ -311,24 +311,24 @@ describe("buildFullCatchUp", () => {
   test("returns session context header", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const parts = await proc.buildFullCatchUp();
     const text = textOf(parts);
 
     expect(text).toContain("[Session context");
-    expect(text).toContain("kitchen");
+    expect(text).toContain("lobby");
   });
 
   test("includes room name and mode", async () => {
     const proc = makeProcessor({ defaultMode: "people" });
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen", "people");
+    await proc.connectRoom(room, "lobby", "people");
 
     const parts = await proc.buildFullCatchUp();
     const text = textOf(parts);
 
-    expect(text).toContain("kitchen");
+    expect(text).toContain("lobby");
     expect(text).toContain("people");
   });
 
@@ -336,7 +336,7 @@ describe("buildFullCatchUp", () => {
     const proc = makeProcessor();
     const room = makeRoom();
     await addHuman(room, "human-1", "Alice");
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const parts = await proc.buildFullCatchUp();
     const text = textOf(parts);
@@ -347,7 +347,7 @@ describe("buildFullCatchUp", () => {
   test("shows (nothing new) when no unseen events", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const parts = await proc.buildFullCatchUp();
     const text = textOf(parts);
@@ -358,7 +358,7 @@ describe("buildFullCatchUp", () => {
   test("shows (standby) for standby modes", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen", "standby-everyone");
+    await proc.connectRoom(room, "lobby", "standby-everyone");
 
     const parts = await proc.buildFullCatchUp();
     const text = textOf(parts);
@@ -372,7 +372,7 @@ describe("buildFullCatchUp", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
     await humanCh.sendMessage("hello from catch-up");
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const parts = await proc.buildFullCatchUp();
     const text = textOf(parts);
@@ -384,13 +384,13 @@ describe("buildFullCatchUp", () => {
     const proc = makeProcessor();
     const room1 = makeRoom("room-1");
     const room2 = makeRoom("room-2");
-    await proc.connectRoom(room1, "kitchen");
+    await proc.connectRoom(room1, "lobby");
     await proc.connectRoom(room2, "lounge");
 
     const parts = await proc.buildFullCatchUp();
     const text = textOf(parts);
 
-    expect(text).toContain("kitchen");
+    expect(text).toContain("lobby");
     expect(text).toContain("lounge");
   });
 });
@@ -408,7 +408,7 @@ describe("content buffering", () => {
     const humanCh = await addHuman(room, "human-1", "Alice");
     const agentCh = await room.connect("stoop-1", "Bot", "agent");
 
-    await proc.connectRoom(room, "kitchen", "people");
+    await proc.connectRoom(room, "lobby", "people");
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
     await tick(50);
@@ -444,7 +444,7 @@ describe("content buffering", () => {
     const agentCh1 = await room1.connect("stoop-1", "Bot1", "agent");
     const agentCh2 = await room2.connect("stoop-2", "Bot2", "agent");
 
-    await proc.connectRoom(room1, "kitchen", "people");
+    await proc.connectRoom(room1, "lobby", "people");
     await proc.connectRoom(room2, "lounge", "people");
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
@@ -456,17 +456,17 @@ describe("content buffering", () => {
     await tick(50);
 
     // Trigger in room1 — should NOT flush room2's buffer
-    await agentCh1.sendMessage("kitchen bot message");
+    await agentCh1.sendMessage("lobby bot message");
     await tick(30);
-    await humanCh1.sendMessage("kitchen human message");
+    await humanCh1.sendMessage("lobby human message");
     await tick(100);
 
     const postTriggerDeliveries = collector.deliveries.slice(catchUpCount);
     const allText = postTriggerDeliveries.map(textOf).join("\n");
 
     // kitchen bot message should appear (flushed by kitchen trigger)
-    expect(allText).toContain("kitchen bot message");
-    expect(allText).toContain("kitchen human message");
+    expect(allText).toContain("lobby bot message");
+    expect(allText).toContain("lobby human message");
 
     await proc.stop();
     await runPromise;
@@ -481,7 +481,7 @@ describe("processing lock", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
 
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     let deliveryCount = 0;
     const deliveries: ContentPart[][] = [];
@@ -530,7 +530,7 @@ describe("processing lock", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
 
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     let deliveryCount = 0;
     const deliveries: ContentPart[][] = [];
@@ -582,7 +582,7 @@ describe("hot-connect notifications", () => {
   test("connecting a room while running sends a notification", async () => {
     const proc = makeProcessor();
     const room1 = makeRoom("room-1");
-    await proc.connectRoom(room1, "kitchen");
+    await proc.connectRoom(room1, "lobby");
 
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
@@ -608,7 +608,7 @@ describe("hot-connect notifications", () => {
   test("connecting a room before run() does NOT send a hot notification", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
@@ -631,9 +631,9 @@ describe("RoomResolver", () => {
   test("resolve by room name", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
-    const conn = proc.resolve("kitchen");
+    const conn = proc.resolve("lobby");
     expect(conn).not.toBeNull();
     expect(conn!.room.roomId).toBe("room-1");
   });
@@ -641,21 +641,21 @@ describe("RoomResolver", () => {
   test("resolve by room ID", async () => {
     const proc = makeProcessor();
     const room = makeRoom("my-room-id");
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const conn = proc.resolve("my-room-id");
     expect(conn).not.toBeNull();
-    expect(conn!.name).toBe("kitchen");
+    expect(conn!.name).toBe("lobby");
   });
 
   test("resolve by identifier", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "Kitchen Crew", undefined, "kitchen-crew");
+    await proc.connectRoom(room, "Lobby Crew", undefined, "lobby-crew");
 
-    const conn = proc.resolve("kitchen-crew");
+    const conn = proc.resolve("lobby-crew");
     expect(conn).not.toBeNull();
-    expect(conn!.name).toBe("Kitchen Crew");
+    expect(conn!.name).toBe("Lobby Crew");
   });
 
   test("resolve returns null for unknown name", async () => {
@@ -669,15 +669,15 @@ describe("RoomResolver", () => {
     const room2 = makeRoom("room-2");
 
     await addHuman(room1, "human-1", "Alice");
-    await proc.connectRoom(room1, "kitchen", "people", "kitchen-id");
+    await proc.connectRoom(room1, "lobby", "people", "lobby-id");
     await proc.connectRoom(room2, "lounge");
 
     const all = proc.listAll();
     expect(all).toHaveLength(2);
 
-    const kitchen = all.find((r) => r.name === "kitchen")!;
+    const kitchen = all.find((r) => r.name === "lobby")!;
     expect(kitchen.roomId).toBe("room-1");
-    expect(kitchen.identifier).toBe("kitchen-id");
+    expect(kitchen.identifier).toBe("lobby-id");
     expect(kitchen.mode).toBe("people");
     expect(kitchen.participantCount).toBe(2); // human + agent
 
@@ -692,7 +692,7 @@ describe("RoomResolver", () => {
     const proc = makeProcessor();
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
@@ -702,7 +702,7 @@ describe("RoomResolver", () => {
     await tick(100);
 
     const all = proc.listAll();
-    const kitchen = all.find((r) => r.name === "kitchen")!;
+    const kitchen = all.find((r) => r.name === "lobby")!;
     expect(kitchen.lastMessage).toContain("Alice");
     expect(kitchen.lastMessage).toContain("latest message here");
 
@@ -717,7 +717,7 @@ describe("onContextCompacted", () => {
   test("clears seen-event cache", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     // Mark some events as seen
     proc.markEventsSeen(["evt-1", "evt-2", "evt-3"]);
@@ -735,7 +735,7 @@ describe("onContextCompacted", () => {
   test("clears ref map", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const ref = proc.assignRef("msg-uuid-1");
     expect(proc.resolveRef(ref)).toBe("msg-uuid-1");
@@ -750,7 +750,7 @@ describe("onContextCompacted", () => {
     const proc = makeProcessor();
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     let deliveryCount = 0;
     const deliveries: ContentPart[][] = [];
@@ -852,10 +852,10 @@ describe("engagement classification end-to-end", () => {
   test("self-sent messages are dropped (not delivered)", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     // The agent sends a message through its own channel
-    const agentConn = proc.resolve("kitchen")!;
+    const agentConn = proc.resolve("lobby")!;
     await agentConn.channel.sendMessage("I said something");
 
     const collector = makeDeliveryCollector();
@@ -876,7 +876,7 @@ describe("engagement classification end-to-end", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
 
-    await proc.connectRoom(room, "kitchen", "standby-everyone");
+    await proc.connectRoom(room, "lobby", "standby-everyone");
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
     await tick(50);
@@ -900,7 +900,7 @@ describe("engagement classification end-to-end", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
 
-    await proc.connectRoom(room, "kitchen", "standby-everyone");
+    await proc.connectRoom(room, "lobby", "standby-everyone");
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
     await tick(50);
@@ -923,7 +923,7 @@ describe("engagement classification end-to-end", () => {
     const humanCh = await addHuman(room, "human-1", "Alice");
     const agentCh = await room.connect("stoop-1", "OtherBot", "agent");
 
-    await proc.connectRoom(room, "kitchen", "people");
+    await proc.connectRoom(room, "lobby", "people");
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
     await tick(50);
@@ -981,7 +981,7 @@ describe("event log", () => {
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
 
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
     await tick(50);
@@ -1007,7 +1007,7 @@ describe("setModeForRoom notification", () => {
   test("mode change sends notification to agent when running", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);
@@ -1030,7 +1030,7 @@ describe("setModeForRoom notification", () => {
   test("mode change with notifyAgent=false does NOT send notification", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen");
+    await proc.connectRoom(room, "lobby");
 
     const collector = makeDeliveryCollector();
     const runPromise = proc.run(collector.deliver);

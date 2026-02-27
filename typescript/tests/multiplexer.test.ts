@@ -46,17 +46,17 @@ describe("adding channels and receiving labeled events", () => {
     while ((await agentCh.receive(10)) !== null) {}
 
     const mux = new EventMultiplexer();
-    mux.addChannel("room-1", "Kitchen", agentCh);
+    mux.addChannel("room-1", "Lobby", agentCh);
 
     // Send a message from the human
-    await humanCh.sendMessage("hello from kitchen");
+    await humanCh.sendMessage("hello from lobby");
 
     const events = await collectEvents(mux, 1);
     expect(events).toHaveLength(1);
     expect(events[0].roomId).toBe("room-1");
-    expect(events[0].roomName).toBe("Kitchen");
+    expect(events[0].roomName).toBe("Lobby");
     expect(events[0].event.type).toBe("MessageSent");
-    expect((events[0].event as MessageSentEvent).message.content).toBe("hello from kitchen");
+    expect((events[0].event as MessageSentEvent).message.content).toBe("hello from lobby");
 
     mux.close();
   });
@@ -67,7 +67,7 @@ describe("adding channels and receiving labeled events", () => {
     const ch2 = await room.connect("agent2", "Agent2", "agent");
 
     const mux = new EventMultiplexer();
-    mux.addChannel("room-1", "Kitchen", ch1);
+    mux.addChannel("room-1", "Lobby", ch1);
     mux.addChannel("room-1", "Kitchen2", ch2); // same roomId — should be ignored
 
     // Only one channel entry — the second addChannel is a no-op
@@ -80,7 +80,7 @@ describe("adding channels and receiving labeled events", () => {
 
     const events = await collectEvents(mux, 1);
     expect(events).toHaveLength(1);
-    expect(events[0].roomName).toBe("Kitchen"); // first add wins
+    expect(events[0].roomName).toBe("Lobby"); // first add wins
 
     mux.close();
   });
@@ -98,7 +98,7 @@ describe("removing a channel stops its events", () => {
     while ((await agentCh.receive(10)) !== null) {}
 
     const mux = new EventMultiplexer();
-    mux.addChannel("room-1", "Kitchen", agentCh);
+    mux.addChannel("room-1", "Lobby", agentCh);
 
     // Send first message — should be received
     await humanCh.sendMessage("before remove");
@@ -159,7 +159,7 @@ describe("close() terminates the iterator", () => {
     mux.close();
 
     // Should not throw, but should be a no-op
-    mux.addChannel("room-1", "Kitchen", ch);
+    mux.addChannel("room-1", "Lobby", ch);
 
     const iter = mux[Symbol.asyncIterator]();
     const result = await iter.next();
@@ -173,7 +173,7 @@ describe("close() terminates the iterator", () => {
     const ch2 = await room2.connect("agent", "Agent", "agent");
 
     const mux = new EventMultiplexer();
-    mux.addChannel("room-1", "Kitchen", ch1);
+    mux.addChannel("room-1", "Lobby", ch1);
     mux.addChannel("room-2", "Living Room", ch2);
 
     mux.close();
@@ -202,11 +202,11 @@ describe("multiple channels interleave events", () => {
     while ((await agentCh2.receive(10)) !== null) {}
 
     const mux = new EventMultiplexer();
-    mux.addChannel("room-1", "Kitchen", agentCh1);
+    mux.addChannel("room-1", "Lobby", agentCh1);
     mux.addChannel("room-2", "Living Room", agentCh2);
 
     // Send messages from both rooms
-    await humanCh1.sendMessage("kitchen message");
+    await humanCh1.sendMessage("lobby message");
     await humanCh2.sendMessage("living room message");
 
     const events = await collectEvents(mux, 2);
@@ -214,13 +214,13 @@ describe("multiple channels interleave events", () => {
 
     // Both rooms should be represented
     const roomNames = new Set(events.map((e) => e.roomName));
-    expect(roomNames.has("Kitchen")).toBe(true);
+    expect(roomNames.has("Lobby")).toBe(true);
     expect(roomNames.has("Living Room")).toBe(true);
 
     // Verify each event has the right room label
-    const kitchenEvent = events.find((e) => e.roomName === "Kitchen")!;
+    const kitchenEvent = events.find((e) => e.roomName === "Lobby")!;
     expect(kitchenEvent.roomId).toBe("room-1");
-    expect((kitchenEvent.event as MessageSentEvent).message.content).toBe("kitchen message");
+    expect((kitchenEvent.event as MessageSentEvent).message.content).toBe("lobby message");
 
     const livingEvent = events.find((e) => e.roomName === "Living Room")!;
     expect(livingEvent.roomId).toBe("room-2");
@@ -278,14 +278,14 @@ describe("multiple channels interleave events", () => {
     while ((await agentCh2.receive(10)) !== null) {}
 
     const mux = new EventMultiplexer();
-    mux.addChannel("room-1", "Kitchen", agentCh1);
+    mux.addChannel("room-1", "Lobby", agentCh1);
     mux.addChannel("room-2", "Living Room", agentCh2);
 
     // Remove kitchen
     mux.removeChannel("room-1");
 
     // Send from both rooms
-    await humanCh1.sendMessage("kitchen msg");
+    await humanCh1.sendMessage("lobby msg");
     await humanCh2.sendMessage("living room msg");
 
     const events = await collectEvents(mux, 1);
@@ -312,7 +312,7 @@ describe("multiple channels interleave events", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const mux = new EventMultiplexer();
-    mux.addChannel("room-1", "Kitchen", agentCh);
+    mux.addChannel("room-1", "Lobby", agentCh);
 
     // The buffered events should be picked up by the listen loop
     const events = await collectEvents(mux, 2);

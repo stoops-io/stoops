@@ -1,8 +1,7 @@
 /**
  * Lite MCP server — for coding/CLI agents with filesystem access.
  *
- * 2 tools: send_message (delegates to shared handler), snapshot_room
- * (writes a grep-friendly log file the agent can Read/Grep on).
+ * 2 tools: send_message, snapshot_room.
  *
  * Returns { url, instance, stop } — same StoopsMcpServer shape as full.
  */
@@ -40,26 +39,8 @@ function formatSnapshotLine(event: RoomEvent): string {
   }
 }
 
-/**
- * Start a lite stoops MCP server (2 tools: send_message, snapshot_room).
- * Designed for CLI/coding agents that can grep snapshot files directly.
- */
-export async function createLiteMcpServer(
-  resolver: RoomResolver,
-  options: ToolHandlerOptions,
-  snapshotDir: string,
-): Promise<StoopsMcpServer> {
-  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-  const { StreamableHTTPServerTransport } = await import(
-    "@modelcontextprotocol/sdk/server/streamableHttp.js"
-  );
-
-  const server = new McpServer(
-    { name: "stoops_tools", version: "1.0.0" },
-  );
-
-  // ── send_message — delegates to shared handler ────────────────────────────
-
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function registerTools(server: any, resolver: RoomResolver, options: ToolHandlerOptions, snapshotDir: string): void {
   server.tool(
     "send_message",
     "Send a message to a specific room. Only use this when you have something genuinely worth saying — a reaction, an answer, a question, a joke. Most of the time, staying quiet is the right call. Not every message needs a response.",
@@ -74,10 +55,8 @@ export async function createLiteMcpServer(
         .describe("Size of the image in bytes"),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    async (args) => handleSendMessage(resolver, args, options) as any,
+    async (args: any) => handleSendMessage(resolver, args, options) as any,
   );
-
-  // ── snapshot_room — writes grep-friendly log file ─────────────────────────
 
   server.tool(
     "snapshot_room",
@@ -85,7 +64,7 @@ export async function createLiteMcpServer(
     {
       room: z.string().describe("Name of the room to snapshot"),
     },
-    async ({ room: roomName }) => {
+    async ({ room: roomName }: { room: string }) => {
       const conn = resolver.resolve(roomName);
       if (!conn) {
         return { content: [{ type: "text" as const, text: `Unknown room "${roomName}".` }] };
@@ -94,9 +73,7 @@ export async function createLiteMcpServer(
       const events = await conn.room.listEvents(undefined, 1000);
       const participants = conn.room.listParticipants();
 
-      const pList = participants.map((p) =>
-        `${p.type} ${p.name}`
-      ).join(", ");
+      const pList = participants.map((p) => `${p.type} ${p.name}`).join(", ");
 
       const lines: string[] = [];
       lines.push(`=== ${roomName} ===`);
@@ -105,7 +82,6 @@ export async function createLiteMcpServer(
       lines.push("===");
       lines.push("");
 
-      // Events are newest-first from storage, reverse for chronological
       for (const event of [...events.items].reverse()) {
         lines.push(formatSnapshotLine(event));
       }
@@ -129,8 +105,23 @@ export async function createLiteMcpServer(
       };
     },
   );
+}
 
-  // ── Start HTTP server on random port ──────────────────────────────────────
+/**
+ * Start a lite stoops MCP server (2 tools: send_message, snapshot_room).
+ */
+export async function createLiteMcpServer(
+  resolver: RoomResolver,
+  options: ToolHandlerOptions,
+  snapshotDir: string,
+): Promise<StoopsMcpServer> {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { StreamableHTTPServerTransport } = await import(
+    "@modelcontextprotocol/sdk/server/streamableHttp.js"
+  );
+
+  const instance = new McpServer({ name: "stoops", version: "1.0.0" });
+  registerTools(instance, resolver, options, snapshotDir);
 
   const httpServer = createServer(async (req, res) => {
     if (req.url !== "/mcp") {
@@ -138,11 +129,17 @@ export async function createLiteMcpServer(
       return;
     }
 
+    // Fresh McpServer per request — McpServer only allows one active transport
+    // at a time. Tool registration is cheap; creating per-request is correct
+    // for stateless HTTP MCP.
+    const reqServer = new McpServer({ name: "stoops", version: "1.0.0" });
+    registerTools(reqServer, resolver, options, snapshotDir);
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
 
-    await server.connect(transport);
+    await reqServer.connect(transport);
 
     let body: unknown;
     if (req.method === "POST") {
@@ -175,5 +172,5 @@ export async function createLiteMcpServer(
     return stopPromise;
   };
 
-  return { url, instance: server, stop };
+  return { url, instance, stop };
 }
