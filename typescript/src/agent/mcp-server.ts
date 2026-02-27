@@ -12,18 +12,13 @@
 
 import { createServer } from "node:http";
 import { z } from "zod";
-import type { RoomResolver, LLMSessionOptions } from "./types.js";
+import type { RoomResolver, ToolHandlerOptions } from "./types.js";
 import {
   handleCatchUp,
   handleSearchByText,
   handleSearchByMessage,
   handleSendMessage,
 } from "./tool-handlers.js";
-
-type HandlerOptions = Pick<
-  LLMSessionOptions,
-  "isEventSeen" | "markEventsSeen" | "assignRef" | "resolveRef"
->;
 
 export interface StoopsMcpServer {
   /** HTTP URL for URL-based MCP clients (e.g. LangGraph, external tools). */
@@ -44,7 +39,7 @@ export interface StoopsMcpServer {
  */
 export async function createStoopsMcpServer(
   resolver: RoomResolver,
-  options: HandlerOptions,
+  options: ToolHandlerOptions,
 ): Promise<StoopsMcpServer> {
   const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
   const { StreamableHTTPServerTransport } = await import(

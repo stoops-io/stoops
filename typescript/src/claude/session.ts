@@ -106,19 +106,17 @@ export class ClaudeSession implements ILLMSession {
         hooks: {
           PreToolUse: [{
             hooks: [async (input) => {
-              const raw = input as Record<string, unknown>;
-              const toolName = (raw.tool_name as string | undefined) || "unknown";
+              const toolName = ("tool_name" in input ? input.tool_name : undefined) || "unknown";
               onToolUse?.(toolName, "started");
-              turns.push({ type: "tool_use", tool: toolName, content: raw.tool_input ?? null });
+              turns.push({ type: "tool_use", tool: toolName, content: "tool_input" in input ? input.tool_input : null });
               return { decision: "approve" as const };
             }],
           }],
           PostToolUse: [{
             hooks: [async (input) => {
-              const raw = input as Record<string, unknown>;
-              const toolName = (raw.tool_name as string | undefined) || "unknown";
+              const toolName = ("tool_name" in input ? input.tool_name : undefined) || "unknown";
               onToolUse?.(toolName, "completed");
-              turns.push({ type: "tool_result", tool: toolName, content: raw.tool_response ?? raw.output ?? null });
+              turns.push({ type: "tool_result", tool: toolName, content: "tool_response" in input ? input.tool_response : null });
               return {};
             }],
           }],
@@ -178,27 +176,25 @@ export class ClaudeSession implements ILLMSession {
       }
 
       for await (const msg of response) {
-        if (msg.type === "system" && "subtype" in msg && msg.subtype === "init") {
+        if (msg.type === "system" && msg.subtype === "init") {
           this._sessionId = msg.session_id;
         }
         if (msg.type === "result") {
           if (this._options.onQueryComplete) {
-            const r = msg as Record<string, unknown>;
-            const usage = r.usage as Record<string, number> | undefined;
-            const inputTokens = usage?.input_tokens ?? 0;
-            const cacheReadInputTokens = usage?.cache_read_input_tokens ?? 0;
+            const inputTokens = msg.usage.input_tokens ?? 0;
+            const cacheReadInputTokens = msg.usage.cache_read_input_tokens ?? 0;
             const contextWindow = MODEL_CONTEXT_WINDOWS[this._model] ?? 200_000;
             const contextPct = Math.max(0, Math.min(100, Math.round(((inputTokens + cacheReadInputTokens) / contextWindow) * 100)));
             this._options.onQueryComplete({
-              totalCostUsd: (r.total_cost_usd as number) ?? 0,
-              durationMs: (r.duration_ms as number) ?? 0,
-              durationApiMs: (r.duration_api_ms as number) ?? 0,
-              numTurns: (r.num_turns as number) ?? 0,
+              totalCostUsd: msg.total_cost_usd ?? 0,
+              durationMs: msg.duration_ms ?? 0,
+              durationApiMs: msg.duration_api_ms ?? 0,
+              numTurns: msg.num_turns ?? 0,
               inputTokens,
-              outputTokens: usage?.output_tokens ?? 0,
+              outputTokens: msg.usage.output_tokens ?? 0,
               cacheReadInputTokens,
-              cacheCreationInputTokens: usage?.cache_creation_input_tokens ?? 0,
-              isError: (r.is_error as boolean) ?? false,
+              cacheCreationInputTokens: msg.usage.cache_creation_input_tokens ?? 0,
+              isError: msg.is_error ?? false,
               contextPct,
               input: inputForTrace,
               turns,

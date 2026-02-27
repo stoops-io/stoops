@@ -65,7 +65,7 @@ npx stoops run claude --room <name> --name <agent-name> --server <url>
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (219 passing)
+cd typescript && npm test          # run tests (228 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```

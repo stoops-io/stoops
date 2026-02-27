@@ -89,12 +89,13 @@ What's built, what works, what's planned. This is the source of truth for the fr
 
 - **Core event loop** — one processor = one agent = N room connections; delivery is pluggable via `run(deliver)` callback
 - **Implements `RoomResolver`** — resolves room names/identifiers/IDs to live connections
+- **Internal delegation** — `ConnectionRegistry` (room connections, name/identifier lookup), `ContentBuffer` (per-room buffering), `EventTracker` (dedup + delivery tracking) extracted as focused internal classes; EventProcessor delegates to them while keeping its public API unchanged
 - **Event flow**: `EventMultiplexer` → `_handleLabeledEvent()` → engagement classify → trigger/content/drop → `deliver(parts)`
-- **Content buffer** — per-room `BufferedContent[]`; content events accumulate between triggers; flushed alongside the next trigger; includes age timestamps ("3s ago")
+- **Content buffer** — per-room `BufferedContent[]`; content events accumulate between triggers; flushed alongside the next trigger
 - **Event queue** — events arriving during delivery are queued; drained as "While you were responding, this happened: ..." batch after delivery completes; LangGraph consumer also supports mid-loop injection via `drainInjectBuffer()` (events seen during tool calls included in the next LLM round)
 - **Processing lock** — `_processing` boolean prevents concurrent deliveries
-- **Seen-event cache** — `Set<string>` of event IDs the consumer has seen; populated when events pass engagement classification (trigger or content); exposed via `isEventSeen()` / `markEventsSeen()` for MCP tools; clears on compaction and stop
-- **Event ID deduplication** — separate `_seenEventIds` set tracks raw event UUIDs at entry; prevents duplicate delivery; self-clears at 500 entries; resets on `stop()`
+- **Seen-event cache** — `EventTracker._deliveredIds` tracks event IDs the consumer has seen; exposed via `isEventSeen()` / `markEventsSeen()` for MCP tools; clears on compaction and stop
+- **Event ID deduplication** — `EventTracker._processedIds` tracks raw event UUIDs at entry; prevents duplicate delivery; self-clears at 500 entries; resets on `stop()`
 - **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs; LCG generator `(n × 6337) % 10000` for non-sequential refs; exposed via `assignRef()` / `resolveRef()` for MCP tools
 - **Inline mode labels** — non-`everyone` rooms show mode in brackets: `[lobby — people]`; `everyone` rooms carry no annotation
 - **Startup full catch-up** — on `run()`, `buildFullCatchUp()` lists every room with mode, participants, and unseen event lines; injected as the first delivery; re-injected post-compaction via `_needsFullCatchUp`
@@ -121,6 +122,12 @@ What's built, what works, what's planned. This is the source of truth for the fr
 - **`buildCatchUpLines()`** — builds catch-up snapshot from unseen events; used by both the MCP tool and the runtime's startup injection
 - **`resolveOrError()`** — room name resolution with error fallback message
 - **`formatMsgLine()`** — formats a single message as a transcript line with refs, replies, and image markers
+- **`ToolHandlerOptions`** — shared type for tool handler and MCP server option parameters; extracted from `ProcessorBridge`
+
+### Types (`agent/types.ts`)
+
+- **`LLMSessionOptions`** — extends `AgentIdentity` (selfId, identity, apiKey), `ProcessorBridge` (isEventSeen, markEventsSeen, assignRef, resolveRef, onContextCompacted, onToolUse), and `SessionCallbacks` (onQueryComplete, resolveParticipantIdentifier, autoCompactPct); backward-compatible union
+- **`ToolHandlerOptions`** — `Pick<ProcessorBridge, "isEventSeen" | "markEventsSeen" | "assignRef" | "resolveRef">`; shared by tool handlers and MCP server
 
 ### Event Multiplexer
 
@@ -154,7 +161,7 @@ What's built, what works, what's planned. This is the source of truth for the fr
 - **Temp directory isolation** — `mkdtempSync` in `/tmp/stoops_agent_*` per session
 - **SDK configuration** — `permissionMode: "bypassPermissions"`, `settingSources: []` (clean slate), no subagents
 - **BYOK support** — API key passed via `env` per query call (not `process.env`)
-- **Configurable auto-compaction** — `autoCompactPct` option on `LLMSessionOptions`; Claude passes via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env per query; suggested tier defaults: Lite 50%, Classic 70%, Premium 90%
+- **Configurable auto-compaction** — `autoCompactPct` option on `SessionCallbacks` (part of `LLMSessionOptions`); Claude passes via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env per query; suggested tier defaults: Lite 50%, Classic 70%, Premium 90%
 - **MCP server** — creates its own via `createStoopsMcpServer()`; registered as `{ type: 'sdk', instance }` for in-process communication (no HTTP overhead)
 - **Hooks** — `PreToolUse` (records tool_use turn, calls onToolUse), `PostToolUse` (records tool_result turn)
 - **`PreCompact` hook** — fires before SDK compaction; injects factual state block (identity + per-room mode/participant counts from `resolver.listAll()`); `onContextCompacted` callback triggers EventProcessor to clear caches, emit `ContextCompactedEvent`, and rebuild catch-up
@@ -177,15 +184,16 @@ What's built, what works, what's planned. This is the source of truth for the fr
 
 ## Tests
 
-- 219 tests passing, 1 skipped (LangGraph integration)
+- 228 tests passing, 1 skipped (LangGraph integration)
 - `event-processor.test.ts` — 55 tests: room connections, dedup, mode management, catch-up building, content buffering, processing lock, hot-connect, RoomResolver, compaction, ref map
 - `engagement.test.ts` — 59 tests: 52 `classifyEvent()` covering all modes and edge cases + 7 `StoopsEngagement` class tests
 - `room.test.ts` — 39 tests: connect/disconnect, message sending, @mention detection, observer behavior, pagination, event broadcasting
 - `format-event.test.ts` — 30 tests: all 12 event types, reply context, reactions, images, room labels, refs, null returns
-- `tool-handlers.test.ts` — 13 tests: room resolution, message formatting, catch-up building, search results
+- `tool-handlers.test.ts` — 18 tests: room resolution, message formatting, catch-up building, search by text, search by message (before/after, ref resolution, unknown anchor)
 - `multiplexer.test.ts` — 12 tests: channel add/remove, close, interleaving, labeled events
 - `ref-map.test.ts` — 8 tests: assignment idempotency, resolution, collision handling, clear/reset
 - `session-langgraph.test.ts` — 4 tests (1 skipped): module exports, session creation, MCP server
+- `session-claude.test.ts` — 4 tests: module exports, session creation, temp directory, SDK loading
 
 ---
 
@@ -198,7 +206,7 @@ What's built, what works, what's planned. This is the source of truth for the fr
   - `POST /join` — agent registers, gets assigned ID, MCP URL, temp directory; server creates `EventProcessor` and room channel per agent
   - `POST /connect` — agent reports tmux session name; server starts `EventProcessor.run()` with tmux delivery
   - `POST /disconnect` — agent teardown; stops processor, disconnects channel
-  - `/mcp?agent=<id>` — per-agent MCP endpoint with `send_message` + `snapshot_room` tools
+  - `/mcp?agent=<id>` — per-agent MCP endpoint with `send_message` + `snapshot_room` tools; MCP server created once at `/join` time, reused across requests
 - **Human participant** — readline stdin for chat input; messages sent via a human channel
 - **Live event log** — room observer prints all events to stdout (joins, leaves, messages, mode changes)
 - **Per-agent EventProcessor** — engagement model, content buffering, event formatting all run in the server process; delivery via `tmux send-keys` to the agent's tmux session
@@ -222,7 +230,6 @@ What's built, what works, what's planned. This is the source of truth for the fr
 - `tmuxInjectText(session, text)` — inject literal text (no Enter); uses `execFileSync` to avoid shell injection
 - `tmuxAttach(session)` — blocking attach
 - `tmuxKillSession(session)` — kill session (safe if already dead)
-- `tmuxWaitForReady(session, marker, timeout)` — poll pane content for a readiness marker
 
 ### CLI MCP tools
 

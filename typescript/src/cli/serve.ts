@@ -31,6 +31,8 @@ interface ConnectedAgent {
   tmpDir: string;
   running: boolean;
   runPromise: Promise<void> | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mcpServer: any;
 }
 
 export interface ServeOptions {
@@ -84,7 +86,7 @@ export async function serve(options: ServeOptions): Promise<void> {
   (async () => {
     try {
       for await (const event of observer) {
-        printEvent(event, roomName);
+        printEvent(event, roomName, room);
       }
     } catch {
       // Observer disconnected
@@ -93,25 +95,11 @@ export async function serve(options: ServeOptions): Promise<void> {
 
   // ── MCP server (per-agent tools) ────────────────────────────────────────
 
-  async function handleMcpRequest(
-    agentId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const agent = agents.get(agentId);
-    if (!agent) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Agent not found" }));
-      return;
-    }
-
+  async function createCliMcpServer(agent: ConnectedAgent) {
     const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-    const { StreamableHTTPServerTransport } = await import(
-      "@modelcontextprotocol/sdk/server/streamableHttp.js"
-    );
 
     const mcpServer = new McpServer(
-      { name: `stoops_${agentId}`, version: "1.0.0" },
+      { name: `stoops_${agent.id}`, version: "1.0.0" },
     );
 
     // ── send_message tool ──
@@ -180,11 +168,29 @@ export async function serve(options: ServeOptions): Promise<void> {
       },
     );
 
-    // Handle the MCP request
+    return mcpServer;
+  }
+
+  async function handleMcpRequest(
+    agentId: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const agent = agents.get(agentId);
+    if (!agent || !agent.mcpServer) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Agent not found" }));
+      return;
+    }
+
+    const { StreamableHTTPServerTransport } = await import(
+      "@modelcontextprotocol/sdk/server/streamableHttp.js"
+    );
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
-    await mcpServer.connect(transport);
+    await agent.mcpServer.connect(transport);
 
     let body: unknown;
     if (req.method === "POST") {
@@ -240,7 +246,9 @@ export async function serve(options: ServeOptions): Promise<void> {
           tmpDir,
           running: false,
           runPromise: null,
+          mcpServer: null,
         };
+        agent.mcpServer = await createCliMcpServer(agent);
         agents.set(agentId, agent);
 
         const mcpUrl = `http://127.0.0.1:${port}/mcp?agent=${agentId}`;
@@ -351,13 +359,14 @@ export async function serve(options: ServeOptions): Promise<void> {
 
 // ── Event display ────────────────────────────────────────────────────────────
 
-function printEvent(event: RoomEvent, roomName: string): void {
+function printEvent(event: RoomEvent, roomName: string, room: Room): void {
   const ts = formatTimestamp(new Date(event.timestamp));
 
   switch (event.type) {
     case "MessageSent": {
       const msg = event.message;
-      const icon = "👤"; // could differentiate human/stoop
+      const sender = room.listParticipants().find((p) => p.id === msg.sender_id);
+      const icon = sender?.type === "stoop" ? "🤖" : "👤";
       console.log(`[${ts}] ${icon} ${msg.sender_name}: ${msg.content}`);
       break;
     }

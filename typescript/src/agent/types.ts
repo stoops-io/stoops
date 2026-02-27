@@ -105,6 +105,31 @@ export interface ILLMSession {
 
 // ── Session options ────────────────────────────────────────────────────────────
 
+/** Agent identity fields. */
+export interface AgentIdentity {
+  selfId?: string;
+  selfIdentifier?: string;
+  identity?: string;
+  apiKey?: string;
+}
+
+/** Callbacks that bridge the session to the EventProcessor. */
+export interface ProcessorBridge {
+  isEventSeen?: (eventId: string) => boolean;
+  markEventsSeen?: (eventIds: string[]) => void;
+  assignRef?: (messageId: string) => string;
+  resolveRef?: (ref: string) => string | undefined;
+  onContextCompacted?: () => void;
+  onToolUse?: (toolName: string, status: "started" | "completed") => void;
+}
+
+/** Session-level callbacks and settings. */
+export interface SessionCallbacks {
+  onQueryComplete?: (stats: LLMQueryStats) => void;
+  resolveParticipantIdentifier?: (id: string) => string | null;
+  autoCompactPct?: number;
+}
+
 /**
  * Options for LLM session consumers.
  *
@@ -112,21 +137,10 @@ export interface ILLMSession {
  * event tracking, ref resolution, stats reporting, and context management.
  * The caller assembles these by wiring EventProcessor methods.
  */
-export interface LLMSessionOptions {
-  onToolUse?: (toolName: string, status: "started" | "completed") => void;
-  onQueryComplete?: (stats: LLMQueryStats) => void;
-  resolveParticipantIdentifier?: (id: string) => string | null;
-  selfId?: string;
-  selfIdentifier?: string;
-  isEventSeen?: (eventId: string) => boolean;
-  markEventsSeen?: (eventIds: string[]) => void;
-  assignRef?: (messageId: string) => string;
-  resolveRef?: (ref: string) => string | undefined;
-  apiKey?: string;
-  onContextCompacted?: () => void;
-  identity?: string;
-  autoCompactPct?: number;
-}
+export interface LLMSessionOptions extends AgentIdentity, ProcessorBridge, SessionCallbacks {}
+
+/** Subset of ProcessorBridge used by tool handlers and MCP server. */
+export type ToolHandlerOptions = Pick<ProcessorBridge, "isEventSeen" | "markEventsSeen" | "assignRef" | "resolveRef">;
 
 /** Claude-specific session options. */
 export interface ClaudeSessionOptions extends LLMSessionOptions {

@@ -1,7 +1,7 @@
 /** Pure tool handler logic */
 
 import type { Message } from "../core/types.js";
-import type { RoomConnection, RoomResolver, LLMSessionOptions } from "./types.js";
+import type { RoomConnection, RoomResolver, ToolHandlerOptions } from "./types.js";
 import { messageRef, formatTimestamp } from "./prompts.js";
 
 /** Tool result shape consumed by both backends. */
@@ -57,7 +57,7 @@ export async function formatMsgLine(
  */
 export async function buildCatchUpLines(
   conn: RoomConnection,
-  options: Pick<LLMSessionOptions, "isEventSeen" | "markEventsSeen" | "assignRef">,
+  options: Pick<ToolHandlerOptions, "isEventSeen" | "markEventsSeen" | "assignRef">,
 ): Promise<string[]> {
   const roomId = conn.room.roomId;
   const result = await conn.room.storage.getEvents(roomId, null, 50, null);
@@ -109,12 +109,10 @@ export async function buildCatchUpLines(
 
 // ── Tool handler functions ────────────────────────────────────────────────────
 
-type HandlerOptions = Pick<LLMSessionOptions, "isEventSeen" | "markEventsSeen" | "assignRef" | "resolveRef">;
-
 export async function handleCatchUp(
   resolver: RoomResolver,
   args: { room: string },
-  options: HandlerOptions,
+  options: ToolHandlerOptions,
 ): Promise<ToolResult> {
   const r = resolveOrError(resolver, args.room);
   if (r.error) return r.result;
@@ -131,7 +129,7 @@ export async function handleCatchUp(
 export async function handleSearchByText(
   resolver: RoomResolver,
   args: { room: string; query: string; count?: number; cursor?: string },
-  options: HandlerOptions,
+  options: ToolHandlerOptions,
 ): Promise<ToolResult> {
   const r = resolveOrError(resolver, args.room);
   if (r.error) return r.result;
@@ -214,7 +212,7 @@ export async function handleSearchByText(
 export async function handleSearchByMessage(
   resolver: RoomResolver,
   args: { room: string; ref: string; direction?: "before" | "after"; count?: number },
-  options: HandlerOptions,
+  options: ToolHandlerOptions,
 ): Promise<ToolResult> {
   const r = resolveOrError(resolver, args.room);
   if (r.error) return r.result;
@@ -284,7 +282,7 @@ export async function handleSendMessage(
     image_mime_type?: string;
     image_size_bytes?: number;
   },
-  options: HandlerOptions,
+  options: ToolHandlerOptions,
 ): Promise<ToolResult> {
   const r = resolveOrError(resolver, args.room);
   if (r.error) return r.result;

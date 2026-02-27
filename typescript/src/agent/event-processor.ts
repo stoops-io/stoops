@@ -26,19 +26,9 @@ import { formatEvent } from "./prompts.js";
 import { buildCatchUpLines } from "./tool-handlers.js";
 import { EventMultiplexer, type LabeledEvent } from "./multiplexer.js";
 import { RefMap } from "./ref-map.js";
-
-// ── Internal types ──────────────────────────────────────────────────────────────
-
-interface InternalConnection extends RoomConnection {
-  roomName: string;
-  identifier?: string;
-}
-
-interface BufferedContent {
-  event: RoomEvent;
-  roomId: string;
-  roomName: string;
-}
+import { ConnectionRegistry, type InternalConnection } from "./connection-registry.js";
+import { ContentBuffer } from "./content-buffer.js";
+import { EventTracker } from "./event-tracker.js";
 
 // ── Options ─────────────────────────────────────────────────────────────────────
 
@@ -78,19 +68,15 @@ export class EventProcessor implements RoomResolver {
 
   private _deliver: ((parts: ContentPart[]) => Promise<void>) | null = null;
   private _multiplexer = new EventMultiplexer();
-  private _connections = new Map<string, InternalConnection>();
-  private _nameToId = new Map<string, string>();
-  private _identifierToId = new Map<string, string>();
+  private _registry = new ConnectionRegistry();
+  private _buffer = new ContentBuffer();
+  private _tracker = new EventTracker();
   private _processing = false;
   private _eventQueue: LabeledEvent[] = [];
-  private _contentBuffer = new Map<string, BufferedContent[]>();
   private _stopped = false;
   private _currentContextRoomId: string | null = null;
   private _log: RoomEvent[] = [];
-  private _lastMessages = new Map<string, string>();
   private _pendingNotifications: Array<{ parts: ContentPart[]; contextRoomId: string | null }> = [];
-  private _seenEventIds = new Set<string>(); // dedup guard
-  private _seenEventCache = new Set<string>(); // tracks events the consumer has seen
   private _needsFullCatchUp = false;
   private _refMap = new RefMap();
   private _injectBuffer: ContentPart[][] = [];
@@ -126,11 +112,11 @@ export class EventProcessor implements RoomResolver {
   // ── Seen-event cache (consumer calls these for catch_up MCP tool) ───────────
 
   isEventSeen(eventId: string): boolean {
-    return this._seenEventCache.has(eventId);
+    return this._tracker.isDelivered(eventId);
   }
 
   markEventsSeen(eventIds: string[]): void {
-    for (const id of eventIds) this._seenEventCache.add(id);
+    this._tracker.markManyDelivered(eventIds);
   }
 
   // ── Inject buffer (LangGraph mid-loop event injection) ──────────────────────
@@ -149,13 +135,13 @@ export class EventProcessor implements RoomResolver {
    * Clears seen-event cache and ref map, schedules full catch-up rebuild.
    */
   onContextCompacted(): void {
-    this._seenEventCache.clear();
+    this._tracker.clearDelivered();
     this._refMap.clear();
     this._needsFullCatchUp = true;
 
     // Emit ContextCompactedEvent to the triggering room
     if (this._currentContextRoomId) {
-      const conn = this._connections.get(this._currentContextRoomId);
+      const conn = this._registry.get(this._currentContextRoomId);
       if (conn) {
         const self = conn.room.listParticipants().find((p) => p.id === this._participantId);
         if (self) {
@@ -177,7 +163,7 @@ export class EventProcessor implements RoomResolver {
    */
   emitToolUse(toolName: string, status: "started" | "completed"): void {
     if (this._currentContextRoomId) {
-      const conn = this._connections.get(this._currentContextRoomId);
+      const conn = this._registry.get(this._currentContextRoomId);
       if (conn) {
         conn.channel.emit(createEvent<ToolUseEvent>({
           type: "ToolUse",
@@ -194,11 +180,7 @@ export class EventProcessor implements RoomResolver {
   // ── RoomResolver implementation ─────────────────────────────────────────────
 
   resolve(roomName: string): RoomConnection | null {
-    const roomId = this._nameToId.get(roomName);
-    if (roomId) return this._connections.get(roomId) ?? null;
-    const idFromIdentifier = this._identifierToId.get(roomName);
-    if (idFromIdentifier) return this._connections.get(idFromIdentifier) ?? null;
-    return this._connections.get(roomName) ?? null;
+    return this._registry.resolve(roomName);
   }
 
   listAll(): Array<{
@@ -209,14 +191,7 @@ export class EventProcessor implements RoomResolver {
     participantCount: number;
     lastMessage?: string;
   }> {
-    return [...this._connections.entries()].map(([roomId, conn]) => ({
-      name: conn.roomName,
-      roomId,
-      ...(conn.identifier ? { identifier: conn.identifier } : {}),
-      mode: this.getModeForRoom(roomId),
-      participantCount: conn.room.listParticipants().length,
-      ...(this._lastMessages.has(roomId) ? { lastMessage: this._lastMessages.get(roomId) } : {}),
-    }));
+    return this._registry.listAll((roomId) => this.getModeForRoom(roomId));
   }
 
   // ── Room connection management ──────────────────────────────────────────────
@@ -227,7 +202,7 @@ export class EventProcessor implements RoomResolver {
     mode?: EngagementMode,
     identifier?: string,
   ): Promise<void> {
-    if (this._connections.has(room.roomId)) return;
+    if (this._registry.has(room.roomId)) return;
 
     const channel = await room.connect(
       this._participantId,
@@ -243,10 +218,8 @@ export class EventProcessor implements RoomResolver {
       true, // silent
     );
 
-    const conn: InternalConnection = { room, channel, name: roomName, roomName, identifier };
-    this._connections.set(room.roomId, conn);
-    this._nameToId.set(roomName, room.roomId);
-    if (identifier) this._identifierToId.set(identifier, room.roomId);
+    const conn: InternalConnection = { room, channel, name: roomName, identifier };
+    this._registry.add(room.roomId, conn);
     if (mode) this._engagement.setMode?.(room.roomId, mode);
 
     // Emit initial mode
@@ -274,17 +247,14 @@ export class EventProcessor implements RoomResolver {
   }
 
   async disconnectRoom(roomId: string): Promise<void> {
-    const conn = this._connections.get(roomId);
+    const conn = this._registry.get(roomId);
     if (!conn) return;
 
     this._multiplexer.removeChannel(roomId);
     await conn.channel.disconnect(true);
-    this._nameToId.delete(conn.roomName);
-    if (conn.identifier) this._identifierToId.delete(conn.identifier);
-    this._connections.delete(roomId);
+    this._registry.remove(roomId);
     this._engagement.onRoomDisconnected?.(roomId);
-    this._contentBuffer.delete(roomId);
-    this._lastMessages.delete(roomId);
+    this._buffer.delete(roomId);
   }
 
   // ── Mode management ─────────────────────────────────────────────────────────
@@ -295,7 +265,7 @@ export class EventProcessor implements RoomResolver {
 
   setModeForRoom(roomId: string, mode: EngagementMode, notifyAgent = true): void {
     this._engagement.setMode?.(roomId, mode);
-    const conn = this._connections.get(roomId);
+    const conn = this._registry.get(roomId);
     if (conn) {
       conn.channel.emit(createEvent<ActivityEvent>({
         type: "Activity",
@@ -305,9 +275,9 @@ export class EventProcessor implements RoomResolver {
         action: "mode_changed",
         detail: { mode },
       })).catch(() => {});
-      this._options.onModeChange?.(roomId, conn.roomName, mode);
+      this._options.onModeChange?.(roomId, conn.name, mode);
       if (notifyAgent && this._deliver && !this._stopped) {
-        const notifyText = `[${conn.roomName}] mode changed to ${mode}.`;
+        const notifyText = `[${conn.name}] mode changed to ${mode}.`;
         if (this._processing) {
           this._pendingNotifications.push({ parts: [{ type: "text", text: notifyText }], contextRoomId: roomId });
         } else {
@@ -336,10 +306,10 @@ export class EventProcessor implements RoomResolver {
     this._deliver = deliver;
 
     // Startup — inject full catch-up
-    if (this._connections.size > 0) {
+    if (this._registry.size > 0) {
       await this._processRaw(
         await this._buildFullCatchUp(),
-        this._connections.values().next().value?.room.roomId ?? null,
+        this._registry.values().next().value?.room.roomId ?? null,
       );
     }
 
@@ -354,15 +324,11 @@ export class EventProcessor implements RoomResolver {
     this._stopped = true;
     this._multiplexer.close();
     await Promise.allSettled(
-      [...this._connections.values()].map((conn) => conn.channel.disconnect(true)),
+      [...this._registry.values()].map((conn) => conn.channel.disconnect(true)),
     );
-    this._connections.clear();
-    this._nameToId.clear();
-    this._identifierToId.clear();
-    this._contentBuffer.clear();
-    this._lastMessages.clear();
-    this._seenEventIds.clear();
-    this._seenEventCache.clear();
+    this._registry.clear();
+    this._buffer.clear();
+    this._tracker.clearAll();
     this._refMap.clear();
     this._deliver = null;
   }
@@ -377,14 +343,14 @@ export class EventProcessor implements RoomResolver {
     const sections: string[] = ["[Session context — loaded automatically]"];
 
     const nameCounts = new Map<string, number>();
-    for (const [, c] of this._connections) nameCounts.set(c.roomName, (nameCounts.get(c.roomName) ?? 0) + 1);
+    for (const [, c] of this._registry.entries()) nameCounts.set(c.name, (nameCounts.get(c.name) ?? 0) + 1);
 
-    for (const [roomId, conn] of this._connections) {
+    for (const [roomId, conn] of this._registry.entries()) {
       const mode = this.getModeForRoom(roomId);
-      const isDuplicate = (nameCounts.get(conn.roomName) ?? 0) > 1;
+      const isDuplicate = (nameCounts.get(conn.name) ?? 0) > 1;
       const ref = isDuplicate ? roomId : (conn.identifier ?? roomId);
 
-      sections.push(`\n${conn.roomName} [${ref}] — ${mode}`);
+      sections.push(`\n${conn.name} [${ref}] — ${mode}`);
 
       if (mode.startsWith("standby-")) {
         sections.push("  (standby — @mentions only)");
@@ -399,8 +365,8 @@ export class EventProcessor implements RoomResolver {
         }
 
         const lines = await buildCatchUpLines(conn, {
-          isEventSeen: (id) => this._seenEventCache.has(id),
-          markEventsSeen: (ids) => { for (const id of ids) this._seenEventCache.add(id); },
+          isEventSeen: (id) => this._tracker.isDelivered(id),
+          markEventsSeen: (ids) => { this._tracker.markManyDelivered(ids); },
           assignRef: (id) => this.assignRef(id),
         });
         if (lines.length > 0) {
@@ -422,17 +388,11 @@ export class EventProcessor implements RoomResolver {
   // ── Event handling ──────────────────────────────────────────────────────────
 
   private async _handleLabeledEvent(labeled: LabeledEvent): Promise<void> {
-    if (this._seenEventIds.has(labeled.event.id)) return;
-    this._seenEventIds.add(labeled.event.id);
-    // Evict oldest half when set grows too large (LRU-style)
-    if (this._seenEventIds.size > 500) {
-      const arr = [...this._seenEventIds];
-      this._seenEventIds = new Set(arr.slice(arr.length >> 1));
-    }
+    if (this._tracker.isDuplicate(labeled.event.id)) return;
 
     const { roomId, event } = labeled;
 
-    const conn = this._connections.get(roomId);
+    const conn = this._registry.get(roomId);
     const senderLookupId =
       event.type === "Mentioned"
         ? (event as MentionedEvent).message.sender_id
@@ -444,12 +404,10 @@ export class EventProcessor implements RoomResolver {
 
     if (disposition === "drop") return;
 
-    this._seenEventCache.add(event.id);
+    this._tracker.markDelivered(event.id);
 
     if (disposition === "content") {
-      const buf = this._contentBuffer.get(roomId) ?? [];
-      buf.push({ event, roomId, roomName: labeled.roomName });
-      this._contentBuffer.set(roomId, buf);
+      this._buffer.push(roomId, { event, roomId, roomName: labeled.roomName });
       return;
     }
 
@@ -478,7 +436,7 @@ export class EventProcessor implements RoomResolver {
       const roomsProcessed = new Set<string>();
 
       for (const qe of queued) {
-        const qConn = this._connections.get(qe.roomId);
+        const qConn = this._registry.get(qe.roomId);
         const qSenderLookupId =
           qe.event.type === "Mentioned"
             ? (qe.event as MentionedEvent).message.sender_id
@@ -491,8 +449,7 @@ export class EventProcessor implements RoomResolver {
 
         if (!roomsProcessed.has(qe.roomId)) {
           roomsProcessed.add(qe.roomId);
-          const buffered = this._contentBuffer.get(qe.roomId) ?? [];
-          this._contentBuffer.delete(qe.roomId);
+          const buffered = this._buffer.flush(qe.roomId);
           for (const item of buffered) {
             const parts = await this._formatForLLM(item.event, item.roomId, item.roomName);
             if (parts) {
@@ -523,8 +480,7 @@ export class EventProcessor implements RoomResolver {
   private async _processTrigger(labeled: LabeledEvent): Promise<void> {
     const { roomId, roomName, event } = labeled;
 
-    const buffered = this._contentBuffer.get(roomId) ?? [];
-    this._contentBuffer.delete(roomId);
+    const buffered = this._buffer.flush(roomId);
 
     const contentPartArrays: ContentPart[][] = [];
     for (const item of buffered) {
@@ -534,13 +490,13 @@ export class EventProcessor implements RoomResolver {
 
     // Cache lastMessage
     if (event.type === "MessageSent") {
-      const conn = this._connections.get(roomId);
+      const conn = this._registry.get(roomId);
       const senderLabel = conn?.room.listParticipants().find((p) => p.id === event.message.sender_id)?.name ?? event.message.sender_name;
       const contentPreview = event.message.content.length > 60 ? event.message.content.slice(0, 57) + "..." : event.message.content;
       const preview = event.message.image_url && !event.message.content.trim()
         ? "sent an image"
         : contentPreview;
-      this._lastMessages.set(roomId, `${senderLabel}: ${preview}`);
+      this._registry.setLastMessage(roomId, `${senderLabel}: ${preview}`);
     }
 
     const triggerParts = await this._formatForLLM(event, roomId, roomName);
@@ -554,7 +510,7 @@ export class EventProcessor implements RoomResolver {
 
   private _resolveParticipantForRoom(roomId: string): (id: string) => Participant | null {
     return (id: string) => {
-      const conn = this._connections.get(roomId);
+      const conn = this._registry.get(roomId);
       if (!conn) return null;
       return conn.room.listParticipants().find((p) => p.id === id) ?? null;
     };
@@ -567,7 +523,7 @@ export class EventProcessor implements RoomResolver {
     if (event.type !== "MessageSent" && event.type !== "Mentioned") return null;
     const msg = event.message;
     if (!msg.reply_to_id) return null;
-    const conn = this._connections.get(roomId);
+    const conn = this._registry.get(roomId);
     if (!conn) return null;
     const repliedTo = await conn.room.getMessage(msg.reply_to_id);
     return repliedTo ? { senderName: repliedTo.sender_name, content: repliedTo.content } : null;
@@ -578,7 +534,7 @@ export class EventProcessor implements RoomResolver {
     roomId: string,
   ): Promise<{ senderName: string; content: string; isSelf: boolean } | null> {
     if (event.type !== "ReactionAdded") return null;
-    const conn = this._connections.get(roomId);
+    const conn = this._registry.get(roomId);
     if (!conn) return null;
     const target = await conn.room.getMessage(event.message_id);
     if (!target) return null;
@@ -635,7 +591,7 @@ export class EventProcessor implements RoomResolver {
         this._needsFullCatchUp = false;
         await this._processRaw(
           await this._buildFullCatchUp(),
-          this._connections.values().next().value?.room.roomId ?? null,
+          this._registry.values().next().value?.room.roomId ?? null,
         );
       }
 
