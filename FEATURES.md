@@ -87,26 +87,25 @@ What's built, what works, what's planned. This is the source of truth for the fr
 - **`classifyEvent()`** — standalone pure function with same logic as `StoopsEngagement`; useful for one-off classification or testing
 - **Person concept** — `personParticipantId` identifies the agent's owner; their messages carry more weight in `people` mode and exclusively trigger in `me` mode
 
-### StoopRuntime
+### EventProcessor
 
-- **Multi-room event loop** — one runtime = one LLM session = N room connections
+- **Core event loop** — one processor = one agent = N room connections; delivery is pluggable via `run(deliver)` callback
 - **Implements `RoomResolver`** — resolves room names/identifiers/IDs to live connections
-- **Event flow**: `EventMultiplexer` → `_handleLabeledEvent()` → engagement classify → trigger/content/drop
-- **Content buffer** — per-room `BufferedContent[]`; content events accumulate between triggers; flushed alongside the next trigger in a single `_processRaw()` call; includes age timestamps ("3s ago")
-- **Event queue** — events arriving during `_processing` are queued; drained as "While you were responding, this happened: ..." batch after the current evaluation completes; LangGraph backend also supports mid-loop injection via `drainEventQueue` (events seen during tool calls included in the next LLM round)
-- **Processing lock** — `_processing` boolean prevents concurrent LLM evaluations
-- **Seen-event cache** — `Set<string>` of event IDs the LLM has seen; populated when events pass engagement classification (trigger or content) and when `catch_up` returns events; used by MCP tools to avoid showing redundant events; clears on compaction (LLM loses context) and runtime restart
-- **Event ID deduplication** — separate `_seenEventIds` set tracks raw event UUIDs at the entry point of `_handleLabeledEvent`; prevents duplicate delivery if the same event arrives twice; self-clears at 500 entries; resets on `stop()`
-- **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs; LCG generator `(n × 6337) % 10000` for non-sequential refs; used in event formatting and tool results
-- **Inline mode labels** — non-`everyone` rooms show mode in brackets: `[Kitchen — people]`; `everyone` rooms carry no annotation; startup prompt lists each room with its mode; hot-connect and mode-change notifications use bare mode names
-- **Startup full catch-up** — on `run()`, `_buildFullCatchUp()` lists every room with its mode and stable ref, shows participants (excluding self and configurable `excludeParticipantIds`) and unseen event lines for active rooms, shows `(standby — @mentions only)` for standby rooms; injected as the first `_processRaw()` call; same snapshot re-injected post-compaction via `_needsFullCatchUp`
-- **Hot connect/disconnect** — rooms can be added/removed while running; on connect, stoop receives "You've been added to [Room Name]" with history; notifications queued during `_processing` are drained after evaluation (not dropped)
-- **Silent connect/disconnect** — `Room.connect(…, silent: true)` and `channel.disconnect(silent: true)` suppress `ParticipantJoined`/`ParticipantLeft` events; used by runtime reconnects, server restore, and observer channel
+- **Event flow**: `EventMultiplexer` → `_handleLabeledEvent()` → engagement classify → trigger/content/drop → `deliver(parts)`
+- **Content buffer** — per-room `BufferedContent[]`; content events accumulate between triggers; flushed alongside the next trigger; includes age timestamps ("3s ago")
+- **Event queue** — events arriving during delivery are queued; drained as "While you were responding, this happened: ..." batch after delivery completes; LangGraph consumer also supports mid-loop injection via `drainInjectBuffer()` (events seen during tool calls included in the next LLM round)
+- **Processing lock** — `_processing` boolean prevents concurrent deliveries
+- **Seen-event cache** — `Set<string>` of event IDs the consumer has seen; populated when events pass engagement classification (trigger or content); exposed via `isEventSeen()` / `markEventsSeen()` for MCP tools; clears on compaction and stop
+- **Event ID deduplication** — separate `_seenEventIds` set tracks raw event UUIDs at entry; prevents duplicate delivery; self-clears at 500 entries; resets on `stop()`
+- **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs; LCG generator `(n × 6337) % 10000` for non-sequential refs; exposed via `assignRef()` / `resolveRef()` for MCP tools
+- **Inline mode labels** — non-`everyone` rooms show mode in brackets: `[Kitchen — people]`; `everyone` rooms carry no annotation
+- **Startup full catch-up** — on `run()`, `buildFullCatchUp()` lists every room with mode, participants, and unseen event lines; injected as the first delivery; re-injected post-compaction via `_needsFullCatchUp`
+- **Hot connect/disconnect** — rooms can be added/removed while running; on connect, agent receives "You've been added to [Room Name]" notification; notifications queued during delivery are drained after
+- **Silent connect/disconnect** — `Room.connect(…, silent: true)` and `channel.disconnect(silent: true)` suppress join/leave events
 - **Mode changes** — `setModeForRoom()` / `getModeForRoom()` delegate to the engagement strategy; emit `ActivityEvent` with `action: "mode_changed"`
-- **Initial mode broadcast** — `connectRoom()` emits the initial `Activity` mode-changed event to the room channel so activity logs always show the starting mode
-- **Activity event routing** — `ToolUseEvent` is routed to the room that triggered the current evaluation, not broadcast to all rooms
-- **preQuery hook** — called before each evaluation; return false to abort (used for credit caps)
-- **ParticipantActivated/Deactivated** — emitted to the room during evaluation so UIs can show "thinking" indicators
+- **Initial mode broadcast** — `connectRoom()` emits the initial mode-changed event to the room channel
+- **Consumer hooks** — `onContextCompacted()` clears caches and schedules catch-up rebuild; `emitToolUse()` routes `ToolUseEvent` to the triggering room; `currentContextRoomId` getter for stats attribution
+- **preQuery hook** — called before each delivery; return false to abort (used for credit caps)
 
 ### MCP Server
 
@@ -151,29 +150,29 @@ What's built, what works, what's planned. This is the source of truth for the fr
 
 ---
 
-## Claude Bridge (`typescript/src/claude/`)
+## Claude Consumer (`typescript/src/claude/`)
 
-- **`ClaudeSession`** — implements `ILLMSession` using `@anthropic-ai/claude-agent-sdk`
+- **`ClaudeSession`** — implements `ILLMSession` using `@anthropic-ai/claude-agent-sdk`; used as the `deliver` callback target for `EventProcessor.run()`
 - **Persistent context** — uses `query()` with `resume: sessionId` so context accumulates across evaluations
 - **Temp directory isolation** — `mkdtempSync` in `/tmp/stoops_agent_*` per session
 - **SDK configuration** — `permissionMode: "bypassPermissions"`, `settingSources: []` (clean slate), no subagents
 - **BYOK support** — API key passed via `env` per query call (not `process.env`)
-- **Configurable auto-compaction** — `autoCompactPct` option on `LLMSessionOptions` and `StoopRuntimeOptions`; Claude passes via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env per query; suggested tier defaults: Lite 50%, Classic 70%, Premium 90%
-- **MCP server** — registered as `{ type: 'sdk', instance }` for in-process communication (no HTTP overhead)
+- **Configurable auto-compaction** — `autoCompactPct` option on `LLMSessionOptions`; Claude passes via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` env per query; suggested tier defaults: Lite 50%, Classic 70%, Premium 90%
+- **MCP server** — creates its own via `createStoopsMcpServer()`; registered as `{ type: 'sdk', instance }` for in-process communication (no HTTP overhead)
 - **Hooks** — `PreToolUse` (records tool_use turn, calls onToolUse), `PostToolUse` (records tool_result turn)
-- **`PreCompact` hook** — fires before SDK compaction; injects factual state block (stoop identity + per-room mode/participant counts from `resolver.listAll()`) and instructs the stoop to write a concise arc summary (ongoing threads, decisions, participant notes); `onContextCompacted` callback clears the seen-event cache and ref map, emits `ContextCompactedEvent`, sets `_needsFullCatchUp`; after the compacting query completes, runtime injects a fresh `_buildFullCatchUp()` snapshot
-- **Stats extraction** — parses SDK result message for cost, tokens, duration; computes `contextPct` as `(inputTokens + cacheReadInputTokens) / contextWindow` clamped to [0, 100]; included in `LLMQueryStats`; reports via `onQueryComplete`
+- **`PreCompact` hook** — fires before SDK compaction; injects factual state block (identity + per-room mode/participant counts from `resolver.listAll()`); `onContextCompacted` callback triggers EventProcessor to clear caches, emit `ContextCompactedEvent`, and rebuild catch-up
+- **Stats extraction** — parses SDK result message for cost, tokens, duration; computes `contextPct` as `(inputTokens + cacheReadInputTokens) / contextWindow` clamped to [0, 100]; reports via `onQueryComplete`
 
 ---
 
-## LangGraph Bridge (`typescript/src/langgraph/`)
+## LangGraph Consumer (`typescript/src/langgraph/`)
 
-- **`LangGraphSession`** — implements `ILLMSession` using `@langchain/*` packages
+- **`LangGraphSession`** — implements `ILLMSession` using `@langchain/*` packages; used as the `deliver` callback target for `EventProcessor.run()`
 - **Optional dependency** — validates LangChain imports at construction time; errors clearly if packages missing
 - **Token pricing table** — cost approximation for Claude (Sonnet/Haiku/Opus), GPT-4o, o3, Gemini models
 - **Context window sizes** — per-model context limits for compaction threshold calculation
 - **Token-based compaction detection** — checks `usage_metadata.input_tokens` after each agent round; fires `onContextCompacted` when `autoCompactPct` threshold is exceeded
-- **HTTP MCP server** — LangGraph connects to stoops tools via URL (not in-process)
+- **MCP server** — creates its own via `createStoopsMcpServer()`; LangGraph connects via HTTP URL (not in-process)
 - **StateGraph** — `inject` → `agent` → `tools` nodes for mid-loop event injection via `drainEventQueue`
 - **Model flexibility** — any LangChain-compatible model (Anthropic, OpenAI, Google)
 
@@ -190,40 +189,56 @@ What's built, what works, what's planned. This is the source of truth for the fr
 
 ---
 
+## CLI (`typescript/src/cli/`)
+
+### `stoops` command (`serve.ts`)
+
+- **Room server** — creates in-memory room (`InMemoryStorage`), holds all state in one process
+- **HTTP API** on configurable port (default 7890):
+  - `POST /join` — agent registers, gets assigned ID, MCP URL, temp directory; server creates `EventProcessor` and room channel per agent
+  - `POST /connect` — agent reports tmux session name; server starts `EventProcessor.run()` with tmux delivery
+  - `POST /disconnect` — agent teardown; stops processor, disconnects channel
+  - `/mcp?agent=<id>` — per-agent MCP endpoint with `send_message` + `snapshot_room` tools
+- **Human participant** — readline stdin for chat input; messages sent via a human channel
+- **Live event log** — room observer prints all events to stdout (joins, leaves, messages, mode changes)
+- **Per-agent EventProcessor** — engagement model, content buffering, event formatting all run in the server process; delivery via `tmux send-keys` to the agent's tmux session
+- **Graceful shutdown** — Ctrl+C disconnects all agents and human, closes HTTP server
+
+### `stoops run claude` command (`run-claude.ts`)
+
+- **Thin client** — registers with stoops server, sets up tmux + MCP, blocks, cleans up on exit
+- **Flow**: `POST /join` → `claude mcp add --transport http` → create tmux session → `POST /connect` → `tmux attach` (blocks) → cleanup
+- **tmux session** — invisible (status bar off); launches `claude` inside; named `stoops_<room>_<name>`
+- **MCP config** — added to Claude Code via `claude mcp add --scope user`; removed on exit via `claude mcp remove`
+- **Stale session cleanup** — kills pre-existing tmux session with same name before creating new one
+- **Preflight checks** — verifies tmux is installed, server is reachable
+
+### tmux helpers (`tmux.ts`)
+
+- `tmuxAvailable()` — check if tmux is installed
+- `tmuxSessionExists(session)` — check if a session exists
+- `tmuxCreateSession(session)` — create detached session with no status bar
+- `tmuxSendCommand(session, command)` — type a command + press Enter
+- `tmuxInjectText(session, text)` — inject literal text (no Enter); uses `execFileSync` to avoid shell injection
+- `tmuxAttach(session)` — blocking attach
+- `tmuxKillSession(session)` — kill session (safe if already dead)
+- `tmuxWaitForReady(session, marker, timeout)` — poll pane content for a readiness marker
+
+### CLI MCP tools
+
+- **`send_message(content, reply_to?)`** — posts a message via the agent's room channel; reply_to uses #ref resolved via server-side RefMap
+- **`snapshot_room()`** — writes room event history to `/tmp/stoops_<agentId>/<room>.log` in grep-friendly format; returns path + search tips; header block with participants and event count; each call overwrites (always fresh)
+
+### Event delivery
+
+- Events flow: Room → EventProcessor (engagement classify → buffer/trigger) → `tmux send-keys` injection
+- Injected as `<room-event>...</room-event>` XML-tagged text
+- No processing lock — server doesn't track when Claude Code is done thinking; events inject as classified
+- Content events buffered and flushed with next trigger (same as app path)
+
+---
+
 ## Not Yet Built
-
-### CLI (`src/cli/`)
-
-- `stoops serve` — room server process (rooms as files, HTTP for connections)
-- `stoops run claude` — tmux bridge: full Claude Code TUI with room events injected
-
-### TUI Bridge (`src/tui/`)
-
-- tmux session management for Claude Code integration
-- Event injection via `tmux send-keys`
-- XML-tagged event format: `<room-event>...</room-event>`
-
-### File-Based Rooms
-
-- `events.log` — append-only log per room, grep-friendly format
-- `participants.json` — runtime-maintained participant state
-- `info.json` — room metadata (name, mode, identifier)
-- `media/` — image files referenced from event log
-- `stoops send` CLI command — the one outbound interaction tool
-- Replaces MCP tools with standard file reading (tail, grep, cat)
-
-### Bridge Interface (v3)
-
-- `Bridge` — replaces `ILLMSession`; three methods: `start(config)`, `deliver(parts)`, `stop()`
-- `claude()` — headless Claude SDK bridge
-- `tui()` — tmux bridge for Claude Code TUI
-- `langgraph()` — LangGraph bridge
-
-### Room Server
-
-- `npx stoops serve --rooms kitchen,lounge --port 3456`
-- For CLI path: rooms run as a service that MCP servers and bridges connect to
-- For programmatic path: rooms are in-process (no server needed)
 
 ### Python Implementation
 
@@ -236,11 +251,7 @@ What's built, what works, what's planned. This is the source of truth for the fr
 
 - **Multiplexer teardown** — does `run()` exit cleanly when all rooms disconnect, or does it hang on the merged async iterator?
 - **RefMap overflow** — when the map overflows between compactions, should we force a context compaction? SDK may not expose a direct `compact()` call.
-- **Log rotation** — `events.log` grows unboundedly; compaction is the natural truncation point, but file rotation strategy is TBD.
-- **Concurrency** — multiple stoops appending to the same room log file; file locking vs per-stoop views?
-- **Nudge granularity** — does "new activity" cause the agent to always cat the whole log? Probably include the new line but agent can pull more.
 - **tmux input collision** — user typing + event arriving simultaneously; XML tags should make events unambiguous but needs real testing.
-- **Security scope of bash** — stoop gets bash access scoped to `.data/rooms/` only; need to verify SDK sandbox options.
-- **SDK Read tool + vision** — confirmed it supports images but needs verification inside a scoped cwd.
+- **Claude Code readiness** — after `tmux send-keys 'claude' Enter`, how long until Claude Code is ready to receive injected events? Need a delay or readiness check before the first injection.
 - **Images in tool results** — `[[img:URL]]` text markers still used in MCP tool output; native vision blocks only work in real-time event injection, not in catch_up/search results.
 - **Engagement mode count** — 8 modes internally, but the v3 UX design exposes 4 active modes + standby as an orthogonal toggle. Should the internal model simplify to match, or keep 8 for power users?

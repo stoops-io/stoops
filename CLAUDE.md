@@ -11,11 +11,10 @@ stoops/
 ├── typescript/          # TypeScript implementation (primary)
 │   ├── src/
 │   │   ├── core/        # Room, Channel, Events, Storage
-│   │   ├── agent/       # Runtime, Engagement, RefMap, MCP tools, prompts
-│   │   ├── claude/      # Claude Agent SDK bridge
-│   │   ├── langgraph/   # LangGraph bridge
-│   │   ├── tui/         # tmux bridge (stoops run claude) — not yet built
-│   │   └── cli/         # CLI entry point — not yet built
+│   │   ├── agent/       # EventProcessor, Engagement, RefMap, MCP tools, prompts
+│   │   ├── claude/      # Claude Agent SDK consumer
+│   │   ├── langgraph/   # LangGraph consumer
+│   │   └── cli/         # CLI commands (stoops, stoops run claude)
 │   ├── tests/
 │   ├── package.json
 │   └── tsconfig.json
@@ -33,7 +32,37 @@ stoops/
 "stoops/langgraph"  → typescript/src/langgraph/
 ```
 
-## Commands
+## CLI
+
+Requires: `tmux` installed, `claude` CLI installed.
+
+```bash
+cd typescript && npm run build     # build first
+```
+
+**Terminal 1 — start a room:**
+```bash
+npx stoops --room kitchen
+```
+This creates an in-memory room, starts an HTTP server (default port 7890), and gives you a chat prompt. Type messages as a human participant.
+
+**Terminal 2 — connect Claude Code:**
+```bash
+npx stoops run claude --room kitchen
+```
+This registers with the server, adds an MCP server to Claude Code, launches `claude` inside an invisible tmux session, and attaches you to it. Room events are injected via `tmux send-keys`. On exit, MCP config and tmux session are cleaned up.
+
+**Options:**
+```bash
+npx stoops --room <name> --port <port>
+npx stoops run claude --room <name> --name <agent-name> --server <url>
+```
+
+**MCP tools available to the agent:**
+- `send_message(content, reply_to?)` — post a message
+- `snapshot_room()` — writes room history to a temp file, returns path + grep tips
+
+## Dev commands
 
 ```bash
 cd typescript && npm test          # run tests (122 passing)
@@ -47,29 +76,31 @@ cd typescript && npm run typecheck # tsc --noEmit
 - **Channel** — per-participant connection with event filtering by category.
 - **Event** — discriminated union of 12 typed events. Classified by `EVENT_ROLE` into message/mention/ambient/internal.
 - **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 8 built-in modes across two axes: who (me/people/stoops/everyone) × how (messages/mentions).
-- **StoopRuntime** — multi-room event loop. Owns the session, multiplexer, engagement strategy, content buffer, ref map, seen-event cache. One runtime = one agent brain = N rooms.
-- **Bridge** — platform-specific delivery layer. Current: `ILLMSession` interface with Claude and LangGraph implementations. Evolving to a simpler `Bridge` interface (start/deliver/stop).
-- **MCP tools** — `catch_up`, `send_message`, `search_by_text`, `search_by_message`. One MCP server per stoop.
+- **EventProcessor** — core event loop. Owns the multiplexer, engagement strategy, content buffer, event queue, ref map, room connections. Delivery is pluggable — `run(deliver)` takes a callback. One processor = one agent = N rooms.
+- **Consumer** — platform-specific delivery. `ILLMSession` interface with Claude and LangGraph implementations. The CLI path uses tmux injection. Consumers own their own lifecycle (session creation, MCP servers, compaction, stats).
+- **MCP tools** — `catch_up`, `send_message`, `search_by_text`, `search_by_message`. One MCP server per consumer.
 - **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs. LCG generator for non-sequential refs.
+
+## Architecture
+
+```
+Room events → EventProcessor → deliver(parts) → Consumer
+               (core)           (callback)       (pluggable)
+```
+
+EventProcessor owns: event loop, engagement classification, content buffering, event formatting, ref map, room connections, mode management.
+
+Consumer owns: LLM delivery, MCP servers, compaction hooks, stats, session lifecycle.
+
+Three consumers exist: ClaudeSession (Claude Agent SDK), LangGraphSession (@langchain/*), and CLI/tmux.
 
 ## What goes where
 
 - Room/channel/event mechanics → `core/`
-- Agent orchestration, engagement, tools → `agent/`
-- Platform-specific LLM integration → `claude/`, `langgraph/`, `tui/`
+- Event processing, engagement, tools → `agent/`
+- Platform-specific LLM integration → `claude/`, `langgraph/`
 - CLI commands → `cli/`
 - Personalities, characters, display names → **app layer** (not here)
-
-## Architecture direction (v3)
-
-Core is evolving from "agent runtime" to "infrastructure agents plug into." Two plugin points:
-
-1. **MCP servers** (agent → world) — tools the agent calls
-2. **Event channel** (world → agent) — classified events pushed via a Bridge
-
-The `ILLMSession` interface will be replaced by a simpler `Bridge` interface. See `docs/architecture.md`.
-
-The CLI path (`stoops serve` + `stoops run claude`) uses file-based rooms instead of MCP tools — events written to log files, agents read them with standard tools. See `docs/cli.md`.
 
 ## Feature tracking
 

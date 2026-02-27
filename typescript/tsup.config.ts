@@ -6,6 +6,7 @@ export default defineConfig({
     "src/agent/index.ts",
     "src/claude/index.ts",
     "src/langgraph/index.ts",
+    "src/cli/index.ts",
   ],
   format: ["esm"],
   dts: true,

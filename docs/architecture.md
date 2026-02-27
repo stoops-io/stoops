@@ -29,8 +29,6 @@ Standard MCP tools. The agent calls them to interact with rooms:
 
 These are request-response. Any MCP-compatible agent can use them.
 
-For the CLI path, MCP tools are replaced by file reads + one CLI command. See `cli.md`.
-
 ### Event channel (world → agent)
 
 When an agent joins a room, the engagement model classifies events and the bridge pushes them into the agent's context. The engagement model (trigger/content/drop) controls what reaches the agent and when. The bridge handles the last mile.
