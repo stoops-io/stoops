@@ -91,7 +91,7 @@ cd typescript
 npm install
 npm run build
 npm link                  # makes `stoops` available globally
-npm test                  # 219 tests
+npm test
 npm run typecheck         # tsc --noEmit
 ```
 

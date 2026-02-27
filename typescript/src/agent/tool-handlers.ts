@@ -34,17 +34,17 @@ export async function formatMsgLine(
   mkRef: (id: string) => string,
 ): Promise<string> {
   const participant = conn.room.listParticipants().find((p) => p.id === msg.sender_id);
-  const emoji = participant?.type === "stoop" ? "🤖" : "👤";
+  const typeLabel = participant?.type ?? "human";
   const ts = formatTimestamp(new Date(msg.timestamp));
   const ref = mkRef(msg.id);
   const imageNote = msg.image_url ? ` [[img:${msg.image_url}]]` : "";
-  let line = `[${ts}] ${emoji} ${msg.sender_name}: ${msg.content}${imageNote} ${ref}`;
+  let line = `[${ts}] ${typeLabel} ${msg.sender_name}: ${msg.content}${imageNote} ${ref}`;
   if (msg.reply_to_id) {
     const target = await conn.room.getMessage(msg.reply_to_id);
     if (target) {
       const targetRef = mkRef(target.id);
       const q = target.content.slice(0, 40) + (target.content.length > 40 ? "..." : "");
-      line = `[${ts}] ${emoji} ${msg.sender_name} (→ ${targetRef} ${target.sender_name}: "${q}"): ${msg.content}${imageNote} ${ref}`;
+      line = `[${ts}] ${typeLabel} ${msg.sender_name} (→ ${targetRef} ${target.sender_name}: "${q}"): ${msg.content}${imageNote} ${ref}`;
     }
   }
   return line;
@@ -84,21 +84,21 @@ export async function buildCatchUpLines(
       lines.push(await formatMsgLine(event.message, conn, mkRef));
     } else if (event.type === "ParticipantJoined") {
       const participant = conn.room.listParticipants().find((p) => p.id === event.participant_id);
-      const emoji = participant?.type === "stoop" ? "🤖" : "👤";
+      const typeLabel = participant?.type ?? "human";
       const name = participant?.name ?? event.participant_id;
-      lines.push(`[${ts}] ${emoji} ${name} joined the chat`);
+      lines.push(`[${ts}] ${typeLabel} ${name} joined the chat`);
     } else if (event.type === "ParticipantLeft") {
       const snapshot = event.participant;
-      const emoji = snapshot?.type === "stoop" ? "🤖" : "👤";
+      const typeLabel = snapshot?.type ?? "human";
       const name = snapshot?.name ?? event.participant_id;
-      lines.push(`[${ts}] ${emoji} ${name} left the chat`);
+      lines.push(`[${ts}] ${typeLabel} ${name} left the chat`);
     } else if (event.type === "ReactionAdded") {
       const participant = conn.room.listParticipants().find((p) => p.id === event.participant_id);
-      const emoji = participant?.type === "stoop" ? "🤖" : "👤";
+      const typeLabel = participant?.type ?? "human";
       const name = participant?.name ?? event.participant_id;
       const target = await conn.room.getMessage(event.message_id);
       const targetRef = target ? ` to ${mkRef(target.id)}` : "";
-      lines.push(`[${ts}] ${emoji} ${name} reacted ${event.emoji}${targetRef}`);
+      lines.push(`[${ts}] ${typeLabel} ${name} reacted ${event.emoji}${targetRef}`);
     }
     // Other event types (ToolUse, Activity, Mentioned, etc.) are skipped
   }

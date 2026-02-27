@@ -230,8 +230,8 @@ function printEvent(event: RoomEvent, roomName: string, room: Room): void {
     case "MessageSent": {
       const msg = event.message;
       const sender = room.listParticipants().find((p) => p.id === msg.sender_id);
-      const icon = sender?.type === "stoop" ? "🤖" : "👤";
-      console.log(`[${ts}] ${icon} ${msg.sender_name}: ${msg.content}`);
+      const typeLabel = sender?.type ?? "human";
+      console.log(`[${ts}] ${typeLabel} ${msg.sender_name}: ${msg.content}`);
       break;
     }
     case "ParticipantJoined":

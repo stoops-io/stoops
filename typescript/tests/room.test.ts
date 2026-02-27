@@ -47,14 +47,14 @@ describe("connect / disconnect", () => {
 
   test("connect as stoop sets type", async () => {
     const room = new Room("test");
-    await room.connect("quinn", "Quinn", "stoop");
+    await room.connect("quinn", "Quinn", "agent");
     const participants = room.listParticipants();
-    expect(participants[0].type).toBe("stoop");
+    expect(participants[0].type).toBe("agent");
   });
 
   test("connect with identifier stores it on participant", async () => {
     const room = new Room("test");
-    await room.connect("quinn", "Quinn", "stoop", "quinn");
+    await room.connect("quinn", "Quinn", "agent", "quinn");
     const participants = room.listParticipants();
     expect(participants[0].identifier).toBe("quinn");
   });
@@ -69,7 +69,7 @@ describe("connect / disconnect", () => {
   test("connect broadcasts ParticipantJoined with correct type", async () => {
     const room = new Room("test");
     const chA = await room.connect("alice", "Alice", "human");
-    await room.connect("quinn", "Quinn", "stoop");
+    await room.connect("quinn", "Quinn", "agent");
 
     // Alice should receive Quinn's ParticipantJoinedEvent
     const events = await drain(chA);
@@ -77,7 +77,7 @@ describe("connect / disconnect", () => {
     expect(events[0].type).toBe("ParticipantJoined");
     const joinEvent = events[0] as ParticipantJoinedEvent;
     expect(joinEvent.participant.name).toBe("Quinn");
-    expect(joinEvent.participant.type).toBe("stoop");
+    expect(joinEvent.participant.type).toBe("agent");
   });
 
   test("joiner does not receive own join event", async () => {
@@ -111,7 +111,7 @@ describe("silent connect / disconnect", () => {
   test("silent connect does not broadcast ParticipantJoined", async () => {
     const room = new Room("test");
     const chA = await room.connect("alice", "Alice", "human");
-    await room.connect("stoop", "StoopBot", "stoop", undefined, undefined, true);
+    await room.connect("agent", "StoopBot", "agent", undefined, undefined, true);
 
     // Alice should NOT receive ParticipantJoined for StoopBot
     const events = await drain(chA);
@@ -121,7 +121,7 @@ describe("silent connect / disconnect", () => {
   test("silent disconnect does not broadcast ParticipantLeft", async () => {
     const room = new Room("test");
     const chA = await room.connect("alice", "Alice", "human");
-    const chB = await room.connect("stoop", "StoopBot", "stoop", undefined, undefined, true);
+    const chB = await room.connect("agent", "StoopBot", "agent", undefined, undefined, true);
     await drain(chA); // clear any events
 
     await chB.disconnect(true);
@@ -229,7 +229,7 @@ describe("subscription filtering", () => {
     const chGhost = await room.connect(
       "ghost",
       "Ghost",
-      "stoop",
+      "agent",
       undefined,
       new Set([EventCategory.MENTION]),
     );
@@ -254,7 +254,7 @@ describe("subscription filtering", () => {
     const chListener = await room.connect(
       "listener",
       "Listener",
-      "stoop",
+      "agent",
       undefined,
       new Set([EventCategory.MESSAGE, EventCategory.MENTION]),
     );
@@ -317,7 +317,7 @@ describe("update subscriptions", () => {
     const chB = await room.connect(
       "bob",
       "Bob",
-      "stoop",
+      "agent",
       undefined,
       new Set([EventCategory.MENTION]),
     );
@@ -409,7 +409,7 @@ describe("mention detection", () => {
   test("no double-mention when identifier matches name lowercased", async () => {
     const room = new Room("test");
     const chA = await room.connect("alice", "Alice", "human", "alice");
-    const chB = await room.connect("bob-id", "quinn", "stoop", "quinn");
+    const chB = await room.connect("bob-id", "quinn", "agent", "quinn");
     await drain(chA);
     await drain(chB);
 

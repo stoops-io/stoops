@@ -207,7 +207,7 @@ export class EventProcessor implements RoomResolver {
     const channel = await room.connect(
       this._participantId,
       this._participantName,
-      "stoop",
+      "agent",
       this._options.selfIdentifier,
       new Set([
         EventCategory.MESSAGE,
@@ -359,7 +359,7 @@ export class EventProcessor implements RoomResolver {
           .filter((p) => p.id !== this._participantId);
         if (participants.length > 0) {
           const pList = participants
-            .map((p) => `${p.type === "stoop" ? "🤖" : "👤"} ${p.name}`)
+            .map((p) => `${p.type} ${p.name}`)
             .join(", ");
           sections.push(`Participants: ${pList}`);
         }

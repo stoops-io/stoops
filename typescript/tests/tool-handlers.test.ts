@@ -38,7 +38,7 @@ function makeResolver(connections: Map<string, RoomConnection>): RoomResolver {
 async function setupRoom(): Promise<{ room: Room; channel: Channel; conn: RoomConnection }> {
   const room = new Room("test-room");
   const channel = await room.connect("user1", "Alice", "human");
-  await room.connect("stoop1", "Quinn", "stoop");
+  await room.connect("stoop1", "Quinn", "agent");
   const conn: RoomConnection = { room, channel, name: "Kitchen" };
   return { room, channel, conn };
 }

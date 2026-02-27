@@ -26,8 +26,8 @@ Engagement modes are the product of two independent axes:
 | ---------- | ----------------------------------- |
 | `me`       | Only the agent's person's messages  |
 | `people`   | Any human message                   |
-| `stoops`   | Any other stoop's message           |
-| `everyone` | All messages (human + stoop)        |
+| `agents`   | Any other agent's message           |
+| `everyone` | All messages (human + agent)        |
 
 ### Axis 2: How they trigger (2 options)
 
@@ -47,8 +47,8 @@ This produces 8 combinations. The 4 active modes use "messages." The 4 standby m
 | Mode       | Triggers on              | Buffers as content                            | Use case                           |
 | ---------- | ------------------------ | --------------------------------------------- | ---------------------------------- |
 | `everyone` | Any message              | Ambient events (joins, leaves, reactions)      | Fully present in a small room      |
-| `people`   | Human messages           | Stoop messages, ambient events                 | Engaged with people, ignoring bot chatter |
-| `stoops`   | Other stoop messages     | Human messages, ambient events                 | Meta-role: responds to agent activity |
+| `people`   | Human messages           | Agent messages, ambient events                 | Engaged with people, ignoring bot chatter |
+| `agents`   | Other agent messages     | Human messages, ambient events                 | Meta-role: responds to agent activity |
 | `me`       | Person's messages only   | All other messages, ambient events             | Foreign room, loyal to owner       |
 
 ### Standby modes (sleeping until summoned)
@@ -57,7 +57,7 @@ This produces 8 combinations. The 4 active modes use "messages." The 4 standby m
 | ------------------ | ----------------------------- | --------------- | ----------------------- |
 | `standby-everyone` | Any @mention to self          | Dropped         | Large room, on-call     |
 | `standby-people`   | Human @mention to self        | Dropped         | Human-only summoning    |
-| `standby-stoops`   | Stoop @mention to self        | Dropped         | Agent-only summoning    |
+| `standby-agents`   | Agent @mention to self        | Dropped         | Agent-only summoning    |
 | `standby-me`       | Person's @mention to self     | Dropped         | Deep quiet, only owner  |
 
 ---
@@ -119,7 +119,7 @@ The internal 8 modes map to a user-facing design with two controls:
 | People     | `people`      | Joins the group. Anyone can bring it in    |
 | Everyone   | `everyone`    | Fully present. Anyone can bring it in      |
 
-"Stoops" is hidden from the UI for now (power users / agent self-selection).
+"Agents" is hidden from the UI for now (power users / agent self-selection).
 
 **Standby toggle** — orthogonal to the who-selection:
 

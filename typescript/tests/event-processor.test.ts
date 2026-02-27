@@ -246,9 +246,9 @@ describe("mode management", () => {
   test("connectRoom with explicit mode sets per-room mode", async () => {
     const proc = makeProcessor({ defaultMode: "everyone" });
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen", "stoops");
+    await proc.connectRoom(room, "kitchen", "agents");
 
-    expect(proc.getModeForRoom(room.roomId)).toBe("stoops");
+    expect(proc.getModeForRoom(room.roomId)).toBe("agents");
   });
 
   test("setModeForRoom updates the mode", async () => {
@@ -279,8 +279,8 @@ describe("mode management", () => {
   test("disconnectRoom cleans up per-room mode", async () => {
     const proc = makeProcessor({ defaultMode: "everyone" });
     const room = makeRoom();
-    await proc.connectRoom(room, "kitchen", "stoops");
-    expect(proc.getModeForRoom(room.roomId)).toBe("stoops");
+    await proc.connectRoom(room, "kitchen", "agents");
+    expect(proc.getModeForRoom(room.roomId)).toBe("agents");
 
     await proc.disconnectRoom(room.roomId);
 
@@ -399,14 +399,14 @@ describe("buildFullCatchUp", () => {
 
 describe("content buffering", () => {
   test("content events are flushed with the next trigger event", async () => {
-    // In "people" mode: human messages trigger, stoop messages are content.
-    // We send a stoop message (buffered) then a human message (trigger).
+    // In "people" mode: human messages trigger, agent messages are content.
+    // We send an agent message (buffered) then a human message (trigger).
     // The delivery should contain both.
     const proc = makeProcessor({ defaultMode: "people" });
     const room = makeRoom();
 
     const humanCh = await addHuman(room, "human-1", "Alice");
-    const stoopCh = await room.connect("stoop-1", "Bot", "stoop");
+    const agentCh = await room.connect("stoop-1", "Bot", "agent");
 
     await proc.connectRoom(room, "kitchen", "people");
     const collector = makeDeliveryCollector();
@@ -414,11 +414,11 @@ describe("content buffering", () => {
     await tick(50);
     const catchUpCount = collector.deliveries.length;
 
-    // Stoop message (classified as "content" in "people" mode)
-    await stoopCh.sendMessage("stoop says hi");
+    // Agent message (classified as "content" in "people" mode)
+    await agentCh.sendMessage("stoop says hi");
     await tick(50);
 
-    // No new delivery yet — stoop message is buffered
+    // No new delivery yet — agent message is buffered
     expect(collector.deliveries.length).toBe(catchUpCount);
 
     // Human message (classified as "trigger" in "people" mode)
@@ -441,8 +441,8 @@ describe("content buffering", () => {
     const room2 = makeRoom("room-2");
 
     const humanCh1 = await addHuman(room1, "human-1", "Alice");
-    const stoopCh1 = await room1.connect("stoop-1", "Bot1", "stoop");
-    const stoopCh2 = await room2.connect("stoop-2", "Bot2", "stoop");
+    const agentCh1 = await room1.connect("stoop-1", "Bot1", "agent");
+    const agentCh2 = await room2.connect("stoop-2", "Bot2", "agent");
 
     await proc.connectRoom(room1, "kitchen", "people");
     await proc.connectRoom(room2, "lounge", "people");
@@ -452,11 +452,11 @@ describe("content buffering", () => {
     const catchUpCount = collector.deliveries.length;
 
     // Buffer content in room2
-    await stoopCh2.sendMessage("lounge bot message");
+    await agentCh2.sendMessage("lounge bot message");
     await tick(50);
 
     // Trigger in room1 — should NOT flush room2's buffer
-    await stoopCh1.sendMessage("kitchen bot message");
+    await agentCh1.sendMessage("kitchen bot message");
     await tick(30);
     await humanCh1.sendMessage("kitchen human message");
     await tick(100);
@@ -917,11 +917,11 @@ describe("engagement classification end-to-end", () => {
     await runPromise;
   });
 
-  test("'people' mode triggers on human messages, buffers stoop messages", async () => {
+  test("'people' mode triggers on human messages, buffers agent messages", async () => {
     const proc = makeProcessor({ defaultMode: "people" });
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
-    const stoopCh = await room.connect("stoop-1", "OtherBot", "stoop");
+    const agentCh = await room.connect("stoop-1", "OtherBot", "agent");
 
     await proc.connectRoom(room, "kitchen", "people");
     const collector = makeDeliveryCollector();
@@ -929,8 +929,8 @@ describe("engagement classification end-to-end", () => {
     await tick(50);
     const catchUpCount = collector.deliveries.length;
 
-    // Stoop message — should be buffered as content, not trigger
-    await stoopCh.sendMessage("stoop message");
+    // Agent message — should be buffered as content, not trigger
+    await agentCh.sendMessage("stoop message");
     await tick(80);
     expect(collector.deliveries.length).toBe(catchUpCount);
 

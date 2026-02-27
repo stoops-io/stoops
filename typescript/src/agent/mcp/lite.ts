@@ -95,7 +95,7 @@ export async function createLiteMcpServer(
       const participants = conn.room.listParticipants();
 
       const pList = participants.map((p) =>
-        `${p.type === "stoop" ? "\u{1F916}" : "\u{1F464}"} ${p.name}`
+        `${p.type} ${p.name}`
       ).join(", ");
 
       const lines: string[] = [];

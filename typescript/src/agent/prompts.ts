@@ -29,21 +29,21 @@ When someone who isn't your person addresses you in a group room, respond if it'
 ## Engagement modes
 Each room has a mode controlling when you evaluate and respond:
 - everyone — all messages trigger evaluation. Respond when you have something genuine to add.
-- people — any human message triggers you. Stoop messages are buffered as context.
-- stoops — any stoop message triggers you. Human messages are buffered as context.
+- people — any human message triggers you. Agent messages are buffered as context.
+- agents — any agent message triggers you. Human messages are buffered as context.
 - me — only your person's messages trigger evaluation. Read everything else quietly.
 - standby-everyone — only @mentions wake you. Stay silent unless directly called, by anyone.
 - standby-people — only human @mentions wake you.
-- standby-stoops — only stoop @mentions wake you.
+- standby-agents — only agent @mentions wake you.
 - standby-me — only your person's @mention wakes you.
 
 Non-everyone rooms show the mode in the room label (e.g., "[Design Room — people]").`;
 
 /**
- * Build the system preamble for a stoop.
+ * Build the system preamble for an agent.
  *
- * Prepends an identity block if the stoop has an identifier or person.
- * The caller (app layer) appends the stoop's personality after this.
+ * Prepends an identity block if the agent has an identifier or person.
+ * The caller (app layer) appends the agent's personality after this.
  */
 export function getSystemPreamble(identifier?: string, personParticipantId?: string): string {
   const lines: string[] = [];
@@ -62,11 +62,10 @@ export function messageRef(messageId: string): string {
 }
 
 
-/** Format a participant as a labeled name: 👤 Alice (human) or 🤖 Agent (stoop). */
+/** Format a participant as a labeled name: "human Alice" or "agent Quinn". */
 export function participantLabel(p: Participant | null, fallback?: string): string {
   if (!p) return fallback ?? "someone";
-  const emoji = p.type === "stoop" ? "🤖" : "👤";
-  return `${emoji} ${p.name}`;
+  return `${p.type} ${p.name}`;
 }
 
 /** Format a Date as UTC HH:MM:SS for display in agent transcripts. */

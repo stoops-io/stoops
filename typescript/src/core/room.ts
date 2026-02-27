@@ -27,7 +27,7 @@
  * const room = new Room("room-1", storage);
  *
  * const aliceChannel = await room.connect("alice-id", "Alice");
- * const agentChannel = await room.connect("agent-id", "Agent", "stoop", "my-agent");
+ * const agentChannel = await room.connect("agent-id", "Agent", "agent", "my-agent");
  * const observer     = room.observe();
  *
  * await aliceChannel.sendMessage("hey @my-agent what do you think?");
@@ -77,7 +77,7 @@ export class Room {
    *
    * @param participantId — stable unique ID for this participant
    * @param name          — display name (shown in messages and events)
-   * @param type          — "human" (default) or "stoop" (agent)
+   * @param type          — "human" (default) or "agent"
    * @param identifier    — optional stable @-mention slug (e.g. "my-agent").
    *                        Used for @-mention matching alongside the display name.
    *                        Unlike name, this should never change.

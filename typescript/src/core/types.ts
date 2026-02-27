@@ -59,7 +59,7 @@ export type Message = z.infer<typeof MessageSchema>;
 // ── Participant ───────────────────────────────────────────────────────────────
 
 /** Whether a participant is a human or an agent. */
-export type ParticipantType = "human" | "stoop";
+export type ParticipantType = "human" | "agent";
 
 /**
  * A participant in a room.
@@ -67,7 +67,7 @@ export type ParticipantType = "human" | "stoop";
  * - `id`         — stable unique ID across all rooms and sessions
  * - `name`       — display name (mutable — participants can rename)
  * - `status`     — current presence status ("online", "offline", etc.)
- * - `type`       — "human" or "stoop" (agent)
+ * - `type`       — "human" or "agent"
  * - `identifier` — optional stable @-mention slug, e.g. "my-agent".
  *                  Unlike `name`, this never changes on rename.
  *                  Used for @-mention matching in addition to the display name.

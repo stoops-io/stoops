@@ -116,7 +116,7 @@ When an agent joins a room, it needs to immediately understand how to participat
 
 - Event format: `[RoomName] 👤 Name: message (#ref)`
 - What refs are (short message IDs for replies and search)
-- What modes mean (everyone/people/stoops/me + standby)
+- What modes mean (everyone/people/agents/me + standby)
 - Available tools and when to use them
 - When to respond vs stay quiet
 - Multi-room behavior (events labeled by room)
@@ -154,8 +154,8 @@ No personality. No character writing. No behavioral coaching beyond "here's how 
 
 ## What's not in core (app layer)
 
-- Stoop personalities and character writing
-- The "person" assignment UX (who owns which stoop)
+- Agent personalities and character writing
+- The "person" assignment UX (who owns which agent)
 - Credit tracking and billing
 - Room creation UI, invite links
 - User authentication

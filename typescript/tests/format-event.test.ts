@@ -20,7 +20,7 @@ import type { ContentPart } from "../src/agent/types.js";
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 const alice: Participant = { id: "alice-id", name: "Alice", status: "online", type: "human" };
-const quinn: Participant = { id: "quinn-id", name: "Quinn", status: "online", type: "stoop", identifier: "quinn" };
+const quinn: Participant = { id: "quinn-id", name: "Quinn", status: "online", type: "agent", identifier: "quinn" };
 
 const participants = new Map<string, Participant>([
   [alice.id, alice],
@@ -126,7 +126,7 @@ describe("MessageSent formatting", () => {
     expect(text).toContain("(#9999)");
   });
 
-  test("stoop participant gets robot emoji label", () => {
+  test("agent participant gets 'agent' label", () => {
     const event = createEvent<MessageSentEvent>({
       type: "MessageSent",
       category: "MESSAGE",
@@ -148,7 +148,7 @@ describe("MessageSent formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    expect(text).toContain("\uD83E\uDD16 Quinn"); // robot emoji
+    expect(text).toContain("agent Quinn");
   });
 
   test("unknown sender falls back to sender_name from message", () => {
@@ -376,7 +376,7 @@ describe("ParticipantJoined/Left formatting", () => {
     expect(text).toContain("joined the chat");
   });
 
-  test("ParticipantJoined for stoop shows robot emoji", () => {
+  test("ParticipantJoined for agent shows 'agent' label", () => {
     const event = createEvent<ParticipantJoinedEvent>({
       type: "ParticipantJoined",
       category: "PRESENCE",
@@ -387,7 +387,7 @@ describe("ParticipantJoined/Left formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    expect(text).toContain("\uD83E\uDD16 Quinn");
+    expect(text).toContain("agent Quinn");
     expect(text).toContain("joined the chat");
   });
 
@@ -677,12 +677,12 @@ describe("helper functions", () => {
     expect(messageRef("12345678-abcd-efgh-ijkl")).toBe("1234");
   });
 
-  test("participantLabel shows human emoji for humans", () => {
-    expect(participantLabel(alice)).toBe("\uD83D\uDC64 Alice");
+  test("participantLabel shows 'human' for humans", () => {
+    expect(participantLabel(alice)).toBe("human Alice");
   });
 
-  test("participantLabel shows robot emoji for stoops", () => {
-    expect(participantLabel(quinn)).toBe("\uD83E\uDD16 Quinn");
+  test("participantLabel shows 'agent' for agent type", () => {
+    expect(participantLabel(quinn)).toBe("agent Quinn");
   });
 
   test("participantLabel returns fallback for null", () => {
