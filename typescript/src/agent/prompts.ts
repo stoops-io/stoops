@@ -9,11 +9,11 @@ import type { ContentPart } from "./types.js";
 const SYSTEM_PREAMBLE = `You are a participant in group chats. You may be connected to multiple rooms at once — events from all of them flow to you, labeled with the room name.
 
 ## How this works
-- Messages appear labeled: "[Kitchen Crew] Rue: hey everyone"
-- Replies: "[Kitchen Crew] Rue (replying to Ash): good point"
-- @mentions: "⚡ [Kitchen Crew] Rue mentioned you: @Ash what do you think?"
+- Messages appear labeled: "[Design Room] Alice: hey everyone"
+- Replies: "[Design Room] Alice (replying to Bob): good point"
+- @mentions: "⚡ [Design Room] Alice mentioned you: @Bob what do you think?"
 - All your tools require a room name as the first parameter
-- Rooms have a stable \`identifier\` (e.g., kitchen-crew) that doesn't change even if renamed
+- Rooms have a stable \`identifier\` (e.g., design-room) that doesn't change even if renamed
 - Message references like #3847 are internal tool labels only. Never include them in messages — participants don't see them.
 
 ## Your memory
@@ -37,7 +37,7 @@ Each room has a mode controlling when you evaluate and respond:
 - standby-stoops — only stoop @mentions wake you.
 - standby-me — only your person's @mention wakes you.
 
-Non-everyone rooms show the mode in the room label (e.g., "[Kitchen Crew — people]").`;
+Non-everyone rooms show the mode in the room label (e.g., "[Design Room — people]").`;
 
 /**
  * Build the system preamble for a stoop.
@@ -61,19 +61,8 @@ export function messageRef(messageId: string): string {
   return messageId.replace(/-/g, "").slice(0, 4);
 }
 
-/** Per-mode label strings. */
-export const MODE_REMINDERS: Record<"me" | "people" | "stoops" | "everyone" | "standby-me" | "standby-people" | "standby-stoops" | "standby-everyone", string> = {
-  me: "me",
-  people: "people",
-  stoops: "stoops",
-  everyone: "everyone",
-  "standby-me": "standby-me",
-  "standby-people": "standby-people",
-  "standby-stoops": "standby-stoops",
-  "standby-everyone": "standby-everyone",
-};
 
-/** Format a participant as a labeled name: 👤 Rue (human) or 🤖 Quinn (stoop). */
+/** Format a participant as a labeled name: 👤 Alice (human) or 🤖 Agent (stoop). */
 export function participantLabel(p: Participant | null, fallback?: string): string {
   if (!p) return fallback ?? "someone";
   const emoji = p.type === "stoop" ? "🤖" : "👤";
@@ -109,8 +98,7 @@ export function formatEvent(
   assignRef?: (messageId: string) => string,
 ): ContentPart[] | null {
   const p = roomLabel ? `[${roomLabel}] ` : "";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ts = `[${formatTimestamp((event as any).timestamp ?? new Date())}] `;
+  const ts = `[${formatTimestamp("timestamp" in event ? (event.timestamp as Date) : new Date())}] `;
   const mkRef = (id: string) => `(#${assignRef ? assignRef(id) : messageRef(id)})`;
 
   switch (event.type) {
@@ -132,7 +120,8 @@ export function formatEvent(
     case "Mentioned": {
       const msg = event.message;
       const label = participantLabel(resolveParticipant(msg.sender_id), msg.sender_name);
-      const text = `${ts}⚡ ${p}${label} mentioned you: ${msg.content}`;
+      const ref = ` ${mkRef(msg.id)}`;
+      const text = `${ts}⚡ ${p}${label} mentioned you: ${msg.content}${ref}`;
       const parts: ContentPart[] = [{ type: "text", text }];
       if (msg.image_url) parts.push({ type: "image", url: msg.image_url });
       return parts;

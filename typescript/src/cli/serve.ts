@@ -16,10 +16,8 @@ import { z } from "zod";
 
 import { Room } from "../core/room.js";
 import { InMemoryStorage } from "../core/storage.js";
-import { EventCategory, type Message } from "../core/types.js";
-import { type RoomEvent, createEvent, type MessageSentEvent } from "../core/events.js";
-import type { ContentPart, RoomConnection, RoomResolver } from "../agent/types.js";
-import { EventProcessor, type EventProcessorOptions } from "../agent/event-processor.js";
+import type { RoomEvent } from "../core/events.js";
+import { EventProcessor } from "../agent/event-processor.js";
 import { contentPartsToString, participantLabel, formatTimestamp } from "../agent/prompts.js";
 import { tmuxInjectText, tmuxSessionExists, tmuxSendEnter } from "./tmux.js";
 
@@ -29,7 +27,6 @@ interface ConnectedAgent {
   id: string;
   name: string;
   processor: EventProcessor;
-  channel: ReturnType<Room["connect"]> extends Promise<infer T> ? T : never;
   tmuxSession: string | null;
   tmpDir: string;
   running: boolean;
@@ -43,7 +40,7 @@ export interface ServeOptions {
 
 // ── Snapshot formatting ──────────────────────────────────────────────────────
 
-function formatSnapshotLine(event: RoomEvent, room: Room): string {
+function formatSnapshotLine(event: RoomEvent): string {
   const ts = formatTimestamp(new Date(event.timestamp));
   switch (event.type) {
     case "MessageSent": {
@@ -68,7 +65,7 @@ function formatSnapshotLine(event: RoomEvent, room: Room): string {
 // ── Main serve command ───────────────────────────────────────────────────────
 
 export async function serve(options: ServeOptions): Promise<void> {
-  const roomName = options.room ?? "kitchen";
+  const roomName = options.room ?? "lobby";
   const port = options.port ?? 7890;
 
   // Create room
@@ -85,8 +82,12 @@ export async function serve(options: ServeOptions): Promise<void> {
   // Log room events to stdout
   const observer = room.observe();
   (async () => {
-    for await (const event of observer) {
-      printEvent(event, roomName);
+    try {
+      for await (const event of observer) {
+        printEvent(event, roomName);
+      }
+    } catch {
+      // Observer disconnected
     }
   })();
 
@@ -127,7 +128,9 @@ export async function serve(options: ServeOptions): Promise<void> {
         if (reply_to) {
           replyToId = agent.processor.resolveRef(reply_to.replace("#", ""));
         }
-        await agent.channel.sendMessage(content, replyToId);
+        const conn = agent.processor.resolve(roomName);
+        if (!conn) return { content: [{ type: "text" as const, text: "Room not connected." }] };
+        await conn.channel.sendMessage(content, replyToId);
         return { content: [{ type: "text" as const, text: "Message sent." }] };
       },
     );
@@ -154,7 +157,7 @@ export async function serve(options: ServeOptions): Promise<void> {
 
         // Events are newest-first from storage, reverse for chronological
         for (const event of [...events.items].reverse()) {
-          lines.push(formatSnapshotLine(event, room));
+          lines.push(formatSnapshotLine(event));
         }
 
         const filePath = join(agent.tmpDir, `${roomName}.log`);
@@ -223,10 +226,7 @@ export async function serve(options: ServeOptions): Promise<void> {
         const tmpDir = join(tmpdir(), `stoops_${agentId}`);
         mkdirSync(tmpDir, { recursive: true });
 
-        // Connect agent to room
-        const agentChannel = await room.connect(agentId, name, "stoop");
-
-        // Create EventProcessor
+        // Create EventProcessor and connect to room (processor owns the channel)
         const processor = new EventProcessor(agentId, name, {
           defaultMode: "everyone",
         });
@@ -236,7 +236,6 @@ export async function serve(options: ServeOptions): Promise<void> {
           id: agentId,
           name,
           processor,
-          channel: agentChannel,
           tmuxSession: null,
           tmpDir,
           running: false,
@@ -269,7 +268,6 @@ export async function serve(options: ServeOptions): Promise<void> {
         agent.runPromise = agent.processor.run(async (parts) => {
           if (!agent.tmuxSession || !tmuxSessionExists(agent.tmuxSession)) return;
           const text = contentPartsToString(parts);
-          const escaped = text.replace(/\\/g, "\\\\").replace(/'/g, "'\\''");
           tmuxInjectText(agent.tmuxSession, `<room-event>\n${text}\n</room-event>`);
           tmuxSendEnter(agent.tmuxSession);
         });
@@ -286,7 +284,6 @@ export async function serve(options: ServeOptions): Promise<void> {
         if (agent) {
           agent.running = false;
           await agent.processor.stop();
-          await agent.channel.disconnect();
           agents.delete(agentId);
         }
 
@@ -301,14 +298,14 @@ export async function serve(options: ServeOptions): Promise<void> {
 
   httpServer.listen(port, "127.0.0.1", () => {
     console.log(`
-  stoops v0.3.0
+  stoops v${process.env.npm_package_version ?? "0.3.0"}
 
   Room: ${roomName}
   Server: http://127.0.0.1:${port}
 
   Connect an agent:
     stoops run claude --room ${roomName}
-    stoops run claude --room ${roomName} --name ash
+    stoops run claude --room ${roomName} --name agent
 `);
     console.log(`[${formatTimestamp(new Date())}] Room "${roomName}" created`);
     console.log(`[${formatTimestamp(new Date())}] 👤 you joined`);
@@ -324,10 +321,12 @@ export async function serve(options: ServeOptions): Promise<void> {
 
   rl.prompt();
 
-  rl.on("line", async (line) => {
+  rl.on("line", (line) => {
     const content = line.trim();
     if (content) {
-      await humanChannel.sendMessage(content);
+      humanChannel.sendMessage(content).catch((err) => {
+        console.error("Failed to send message:", err);
+      });
     }
     rl.prompt();
   });
@@ -340,7 +339,6 @@ export async function serve(options: ServeOptions): Promise<void> {
     observer.disconnect();
     for (const agent of agents.values()) {
       await agent.processor.stop();
-      await agent.channel.disconnect();
     }
     await humanChannel.disconnect();
     httpServer.close();

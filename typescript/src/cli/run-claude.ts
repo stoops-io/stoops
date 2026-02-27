@@ -5,7 +5,7 @@
  * creates a tmux session, and blocks until the user exits.
  */
 
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import {
   tmuxAvailable,
   tmuxCreateSession,
@@ -52,7 +52,11 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
       process.exit(1);
     }
 
-    const data = await res.json() as { agentId: string; mcpUrl: string };
+    const data = await res.json() as Record<string, unknown>;
+    if (typeof data.agentId !== "string" || typeof data.mcpUrl !== "string") {
+      console.error("Invalid response from server: missing agentId or mcpUrl");
+      process.exit(1);
+    }
     agentId = data.agentId;
     mcpUrl = data.mcpUrl;
   } catch (err) {
@@ -68,10 +72,7 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
 
   console.log("Adding MCP server...");
   try {
-    execSync(
-      `claude mcp add --transport http --scope user ${mcpName} ${mcpUrl}`,
-      { stdio: "ignore" },
-    );
+    execFileSync("claude", ["mcp", "add", "--transport", "http", "--scope", "user", mcpName, mcpUrl], { stdio: "ignore" });
   } catch (err) {
     console.error("Failed to add MCP server to Claude Code. Is `claude` installed?");
     await disconnect(serverUrl, agentId);
@@ -101,7 +102,7 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
     });
   } catch {
     console.error("Failed to notify server about tmux session.");
-    cleanup(serverUrl, agentId, mcpName, tmuxSession);
+    await cleanup(serverUrl, agentId, mcpName, tmuxSession);
     process.exit(1);
   }
 
@@ -147,7 +148,7 @@ async function cleanup(
 
   // Remove MCP server from Claude Code config
   try {
-    execSync(`claude mcp remove ${mcpName}`, { stdio: "ignore" });
+    execFileSync("claude", ["mcp", "remove", mcpName], { stdio: "ignore" });
   } catch {
     // May already be removed
   }

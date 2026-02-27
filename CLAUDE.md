@@ -42,13 +42,13 @@ cd typescript && npm run build     # build first
 
 **Terminal 1 — start a room:**
 ```bash
-npx stoops --room kitchen
+npx stoops --room lobby
 ```
 This creates an in-memory room, starts an HTTP server (default port 7890), and gives you a chat prompt. Type messages as a human participant.
 
 **Terminal 2 — connect Claude Code:**
 ```bash
-npx stoops run claude --room kitchen
+npx stoops run claude --room lobby
 ```
 This registers with the server, adds an MCP server to Claude Code, launches `claude` inside an invisible tmux session, and attaches you to it. Room events are injected via `tmux send-keys`. On exit, MCP config and tmux session are cleaned up.
 
@@ -65,7 +65,7 @@ npx stoops run claude --room <name> --name <agent-name> --server <url>
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (122 passing)
+cd typescript && npm test          # run tests (219 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```
@@ -78,7 +78,7 @@ cd typescript && npm run typecheck # tsc --noEmit
 - **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 8 built-in modes across two axes: who (me/people/stoops/everyone) × how (messages/mentions).
 - **EventProcessor** — core event loop. Owns the multiplexer, engagement strategy, content buffer, event queue, ref map, room connections. Delivery is pluggable — `run(deliver)` takes a callback. One processor = one agent = N rooms.
 - **Consumer** — platform-specific delivery. `ILLMSession` interface with Claude and LangGraph implementations. The CLI path uses tmux injection. Consumers own their own lifecycle (session creation, MCP servers, compaction, stats).
-- **MCP tools** — `catch_up`, `send_message`, `search_by_text`, `search_by_message`. One MCP server per consumer.
+- **MCP tools** — app path: `catch_up`, `send_message`, `search_by_text`, `search_by_message` (one MCP server per consumer). CLI path: `send_message`, `snapshot_room` (one per agent, served by the stoops server).
 - **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs. LCG generator for non-sequential refs.
 
 ## Architecture

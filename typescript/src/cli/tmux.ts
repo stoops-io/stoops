@@ -67,28 +67,6 @@ export function tmuxKillSession(session: string): void {
   }
 }
 
-/** Wait for a process to appear inside a tmux session (polls pane content). */
-export async function tmuxWaitForReady(
-  session: string,
-  marker: string,
-  timeoutMs = 15000,
-  intervalMs = 500,
-): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const content = execSync(
-        `tmux capture-pane -t ${shellEscape(session)} -p`,
-        { encoding: "utf-8" },
-      );
-      if (content.includes(marker)) return true;
-    } catch {
-      // Session may not be ready yet
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return false;
-}
 
 function shellEscape(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;

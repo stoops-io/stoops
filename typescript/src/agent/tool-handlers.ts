@@ -81,27 +81,14 @@ export async function buildCatchUpLines(
     const ts = formatTimestamp(new Date(event.timestamp));
 
     if (event.type === "MessageSent") {
-      const participant = conn.room.listParticipants().find((p) => p.id === event.message.sender_id);
-      const emoji = participant?.type === "stoop" ? "🤖" : "👤";
-      const ref = mkRef(event.message.id);
-      const imageNote = event.message.image_url ? ` [[img:${event.message.image_url}]]` : "";
-      let line = `[${ts}] ${emoji} ${event.message.sender_name}: ${event.message.content}${imageNote} ${ref}`;
-      if (event.message.reply_to_id) {
-        const target = await conn.room.getMessage(event.message.reply_to_id);
-        if (target) {
-          const targetRef = mkRef(target.id);
-          const q = target.content.slice(0, 40) + (target.content.length > 40 ? "..." : "");
-          line = `[${ts}] ${emoji} ${event.message.sender_name} (→ ${targetRef} ${target.sender_name}: "${q}"): ${event.message.content}${imageNote} ${ref}`;
-        }
-      }
-      lines.push(line);
+      lines.push(await formatMsgLine(event.message, conn, mkRef));
     } else if (event.type === "ParticipantJoined") {
       const participant = conn.room.listParticipants().find((p) => p.id === event.participant_id);
       const emoji = participant?.type === "stoop" ? "🤖" : "👤";
       const name = participant?.name ?? event.participant_id;
       lines.push(`[${ts}] ${emoji} ${name} joined the chat`);
     } else if (event.type === "ParticipantLeft") {
-      const snapshot = "participant" in event ? (event as { participant?: { name?: string; type?: string } }).participant : null;
+      const snapshot = event.participant;
       const emoji = snapshot?.type === "stoop" ? "🤖" : "👤";
       const name = snapshot?.name ?? event.participant_id;
       lines.push(`[${ts}] ${emoji} ${name} left the chat`);
@@ -249,7 +236,6 @@ export async function handleSearchByMessage(
   const anchorIdx = recentChron.findIndex((m) => m.id === anchor.id);
 
   let displayMessages: Message[];
-  let anchorIsLast: boolean;
   let newerCount: number;
 
   if (direction === "before") {
@@ -257,7 +243,6 @@ export async function handleSearchByMessage(
     const beforeResult = await conn.room.storage.getMessages(roomId, count, anchor.id);
     const beforeMessages = [...beforeResult.items].reverse(); // chronological
     displayMessages = [...beforeMessages, anchor];
-    anchorIsLast = true;
     newerCount = anchorIdx >= 0 ? recentChron.length - anchorIdx - 1 : 100; // 100+ if too old
   } else {
     // "after" — use recent window
@@ -270,7 +255,6 @@ export async function handleSearchByMessage(
       displayMessages = [anchor];
       newerCount = 100;
     }
-    anchorIsLast = false;
   }
 
   const anchorRef = mkRef(anchor.id);
@@ -286,8 +270,6 @@ export async function handleSearchByMessage(
     const countLabel = newerCount >= 100 ? "100+" : String(newerCount);
     lines.push("", `${countLabel} newer message${newerCount === 1 ? "" : "s"} in this room.`);
   }
-
-  void anchorIsLast; // used for documentation only
 
   return textResult(lines.join("\n"));
 }
@@ -324,5 +306,6 @@ export async function handleSendMessage(
   }
   const message = await channel.sendMessage(args.content, replyToId, image);
 
-  return { content: [{ type: "text" as const, text: JSON.stringify(message) }] };
+  const ref = options.assignRef?.(message.id) ?? messageRef(message.id);
+  return textResult(`Message sent (#${ref}).`);
 }

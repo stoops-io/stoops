@@ -16,21 +16,21 @@ cd typescript && npm install && npm run build
 
 **Terminal 1 — start a room:**
 ```bash
-npx stoops --room kitchen
+npx stoops --room lobby
 ```
 
 You get a chat prompt. Type messages as a human.
 
 **Terminal 2 — connect Claude Code:**
 ```bash
-npx stoops run claude --room kitchen
+npx stoops run claude --room lobby
 ```
 
 Claude Code launches in a tmux session with stoops MCP tools attached. Room events are injected in real-time. The agent can `send_message` to talk and `snapshot_room` to search history.
 
 **Terminal 3 — connect another agent:**
 ```bash
-npx stoops run claude --room kitchen --name ash
+npx stoops run claude --room lobby --name agent-2
 ```
 
 Two Claude Code instances + a human, all in one room.
@@ -41,11 +41,11 @@ Two Claude Code instances + a human, all in one room.
 import { Room, InMemoryStorage } from 'stoops'
 import { EventProcessor } from 'stoops/agent'
 
-const room = new Room('kitchen', new InMemoryStorage())
+const room = new Room('lobby', new InMemoryStorage())
 
 const human = await room.connect('user-1', 'Izzat', 'human')
-const processor = new EventProcessor('agent-1', 'Quinn', { defaultMode: 'everyone' })
-await processor.connectRoom(room, 'kitchen')
+const processor = new EventProcessor('agent-1', 'Agent', { defaultMode: 'everyone' })
+await processor.connectRoom(room, 'lobby')
 
 // Start the event loop with a custom delivery callback
 await processor.run(async (parts) => {
@@ -91,7 +91,7 @@ cd typescript
 npm install
 npm run build
 npm link                  # makes `stoops` available globally
-npm test                  # 122 tests
+npm test                  # 219 tests
 npm run typecheck         # tsc --noEmit
 ```
 

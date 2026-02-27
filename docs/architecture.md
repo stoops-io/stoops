@@ -1,4 +1,9 @@
-# Architecture
+# Architecture (Aspirational)
+
+> **Note:** This document describes the v3 target architecture, not the current state.
+> The current code uses `ILLMSession` (not `Bridge`), `ClaudeSession` / `LangGraphSession`
+> (not factory functions), and `EventProcessor` (not `StoopRuntime`).
+> See FEATURES.md for the current state.
 
 Where the core is heading. Written Feb 2026.
 
@@ -94,7 +99,7 @@ How it works:
 2. User sees the normal Claude Code TUI — types normally, approves tools, everything
 3. Room events arrive → bridge injects via `tmux send-keys -l`:
    ```
-   <room-event>[Kitchen] 👤 Rue: hey what's up (#a1b2)</room-event>
+   <room-event>[lobby] 👤 Alice: hey what's up (#a1b2)</room-event>
    ```
 4. Claude Code receives it as input, processes it alongside whatever the user is doing
 

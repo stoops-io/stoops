@@ -113,7 +113,6 @@ export interface ILLMSession {
  * The caller assembles these by wiring EventProcessor methods.
  */
 export interface LLMSessionOptions {
-  pathToClaudeCodeExecutable?: string;
   onToolUse?: (toolName: string, status: "started" | "completed") => void;
   onQueryComplete?: (stats: LLMQueryStats) => void;
   resolveParticipantIdentifier?: (id: string) => string | null;
@@ -127,5 +126,14 @@ export interface LLMSessionOptions {
   onContextCompacted?: () => void;
   identity?: string;
   autoCompactPct?: number;
+}
+
+/** Claude-specific session options. */
+export interface ClaudeSessionOptions extends LLMSessionOptions {
+  pathToClaudeCodeExecutable?: string;
+}
+
+/** LangGraph-specific session options. */
+export interface LangGraphSessionOptions extends LLMSessionOptions {
   drainEventQueue?: () => ContentPart[][] | null;
 }

@@ -158,7 +158,8 @@ export function paginateByIndex<T>(
   limit: number,
   cursor: string | null | undefined,
 ): PaginatedResult<T> {
-  const endIdx = cursor != null ? parseInt(cursor, 10) : items.length;
+  const parsedCursor = cursor != null ? parseInt(cursor, 10) : items.length;
+  const endIdx = Number.isNaN(parsedCursor) ? items.length : parsedCursor;
   const startIdx = Math.max(0, endIdx - limit);
   const page = items.slice(startIdx, endIdx).reverse();
   const has_more = startIdx > 0;

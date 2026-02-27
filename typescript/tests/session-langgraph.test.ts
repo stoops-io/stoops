@@ -40,7 +40,9 @@ describe("LangGraphSession", () => {
     expect(typeof session.setApiKey).toBe("function");
   });
 
-  test.skipIf(!hasLangChain)("start() initializes graph with MCP tools", async () => {
+  // Integration test — requires LangChain packages AND API keys.
+  // Skipped in CI. Run manually with: ANTHROPIC_API_KEY=... npx vitest run -t "start()"
+  test.skip("start() initializes graph with MCP tools (integration)", async () => {
     const { createLangGraphSession } = await import("../src/langgraph/session.js");
     const { Room } = await import("../src/core/room.js");
     const room = new Room("test");
@@ -51,18 +53,8 @@ describe("LangGraphSession", () => {
     };
 
     const session = createLangGraphSession("You are a test.", resolver, "anthropic:claude-sonnet-4-5-20250929", {});
-    try {
-      await session.start();
-      await session.stop();
-    } catch (err: unknown) {
-      // Expected: initChatModel may fail without API key env vars.
-      // Verify the error is env/config related, not a code bug.
-      const msg = err instanceof Error ? err.message : String(err);
-      expect(
-        msg.includes("API") || msg.includes("key") || msg.includes("auth") ||
-        msg.includes("model") || msg.includes("credential") || msg.includes("environment"),
-      ).toBe(true);
-    }
+    await session.start();
+    await session.stop();
   });
 });
 

@@ -49,7 +49,7 @@ export interface EventProcessorOptions {
   engagement?: EngagementStrategy;
   /** The agent owner's participant ID (for "me" / "standby-me" modes). */
   personParticipantId?: string;
-  /** The agent's own stable identifier slug (e.g. "quinn"). */
+  /** The agent's own stable identifier slug (e.g. "my-agent"). */
   selfIdentifier?: string;
   /** Called when engagement mode changes for a room. */
   onModeChange?: (roomId: string, roomName: string, mode: EngagementMode) => void;
@@ -424,14 +424,18 @@ export class EventProcessor implements RoomResolver {
   private async _handleLabeledEvent(labeled: LabeledEvent): Promise<void> {
     if (this._seenEventIds.has(labeled.event.id)) return;
     this._seenEventIds.add(labeled.event.id);
-    if (this._seenEventIds.size > 500) this._seenEventIds.clear();
+    // Evict oldest half when set grows too large (LRU-style)
+    if (this._seenEventIds.size > 500) {
+      const arr = [...this._seenEventIds];
+      this._seenEventIds = new Set(arr.slice(arr.length >> 1));
+    }
 
     const { roomId, event } = labeled;
 
     const conn = this._connections.get(roomId);
     const senderLookupId =
       event.type === "Mentioned"
-        ? (event as { message: { sender_id: string } }).message.sender_id
+        ? (event as MentionedEvent).message.sender_id
         : event.participant_id;
     const sender = conn?.room.listParticipants().find((p) => p.id === senderLookupId);
     const senderType: ParticipantType = sender?.type ?? "human";
@@ -618,7 +622,8 @@ export class EventProcessor implements RoomResolver {
     this._currentContextRoomId = contextRoomId;
 
     try {
-      await this._deliver!(parts);
+      if (!this._deliver) return;
+      await this._deliver(parts);
     } catch (err) {
       console.error(`[${this._participantName}] error:`, err);
     } finally {

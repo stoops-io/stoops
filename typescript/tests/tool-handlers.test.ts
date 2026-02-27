@@ -161,7 +161,7 @@ describe("handleSearchByText", () => {
 });
 
 describe("handleSendMessage", () => {
-  test("sends a message and returns JSON", async () => {
+  test("sends a message and returns confirmation", async () => {
     const { conn } = await setupRoom();
     const connections = new Map([["test-room", conn]]);
     const resolver = makeResolver(connections);
@@ -171,9 +171,7 @@ describe("handleSendMessage", () => {
       { room: "Kitchen", content: "Hello from handler" },
       {},
     );
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.content).toBe("Hello from handler");
-    expect(parsed.sender_name).toBe("Alice");
+    expect(result.content[0].text).toContain("Message sent");
   });
 
   test("resolves reply ref", async () => {
@@ -188,8 +186,12 @@ describe("handleSendMessage", () => {
       { room: "Kitchen", content: "reply", reply_to_id: "#abc" },
       { resolveRef: (ref) => ref === "abc" ? msg.id : undefined },
     );
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.reply_to_id).toBe(msg.id);
+    // Verify the message was sent — the result is a confirmation string now
+    expect(result.content[0].text).toContain("Message sent");
+
+    // Verify the reply was actually linked by checking the last message in storage
+    const messages = await conn.room.storage.getMessages(conn.room.roomId, 1, null);
+    expect(messages.items[0].reply_to_id).toBe(msg.id);
   });
 });
 

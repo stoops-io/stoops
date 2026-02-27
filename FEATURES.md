@@ -9,16 +9,14 @@ What's built, what works, what's planned. This is the source of truth for the fr
 ### Room
 
 - **Room** — shared real-time space; all participants connect via channels and receive events
-- **`Room.connect(id, name, type, options?)`** — creates a `Channel` for a participant; `silent: true` suppresses the `ParticipantJoined` event (used for agent reconnects); supports optional `identifier` on the participant
+- **`Room.connect(participantId, name, type?, identifier?, subscribe?, silent?)`** — creates a `Channel` for a participant; `silent: true` suppresses the `ParticipantJoined` event (used for agent reconnects); supports optional `identifier` for @mention matching; reconnects disconnect the old channel automatically
 - **`Room.observe()`** — returns a `Channel` that receives every room event including targeted `MentionedEvent`s directed at other participants; observers are excluded from `listParticipants()` and don't emit join/leave events; disconnect via `observer.disconnect()`
-- **`Room.listParticipants()`** — returns all connected participants; accepts optional `excludeIds` array to filter synthetic entries (e.g. `__observer__`)
+- **`Room.listParticipants()`** — returns all connected participants (observers excluded)
 - **`Room.listMessages(count, cursor)`** — paginated message history, newest-first
 - **`Room.searchMessages(query, count, cursor)`** — keyword search across message content, newest-first
 - **`Room.listEvents(category?, count?, cursor?)`** — paginated event history, optionally filtered by category
 - **`Room.getMessage(messageId)`** — O(1) lookup for reply context resolution
 - **@mention detection** — `_detectMentions()` scans message content for `@name` and `@identifier` patterns (case-insensitive); emits targeted `MentionedEvent` to the mentioned participant's channel only
-- **`RoomOptions.onMention` callback** — optional callback invoked when any participant is mentioned; used by app layer to forward mention events to external systems (replaces hardcoded `__observer__` forwarding)
-- **`excludeParticipantIds`** — runtime option to filter synthetic participants from listings
 
 ### Channel
 
@@ -42,7 +40,7 @@ What's built, what works, what's planned. This is the source of truth for the fr
 - **`createEvent<T>(data)`** — factory that fills in UUID `id` and `timestamp`
 - **`ParticipantLeftEvent` snapshot** — carries a full `Participant` snapshot captured before removal so display names are always resolvable
 - **`MentionedEvent`** — delivered only to the mentioned participant's channel; `participant_id` is the recipient, not the sender; sender is in `message.sender_id`
-- **`ToolUseEvent`** — emitted twice per tool call: `status: "started"` before, `status: "completed"` after
+- **`ToolUseEvent`** — emitted twice per tool call: `status: "started" | "completed"` (typed union)
 - **`ActivityEvent`** — generic extensible event; current usage: `action: "mode_changed"` with `detail: { mode }`
 - **`ContextCompactedEvent`** — carries participant snapshot for display
 
@@ -98,7 +96,7 @@ What's built, what works, what's planned. This is the source of truth for the fr
 - **Seen-event cache** — `Set<string>` of event IDs the consumer has seen; populated when events pass engagement classification (trigger or content); exposed via `isEventSeen()` / `markEventsSeen()` for MCP tools; clears on compaction and stop
 - **Event ID deduplication** — separate `_seenEventIds` set tracks raw event UUIDs at entry; prevents duplicate delivery; self-clears at 500 entries; resets on `stop()`
 - **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs; LCG generator `(n × 6337) % 10000` for non-sequential refs; exposed via `assignRef()` / `resolveRef()` for MCP tools
-- **Inline mode labels** — non-`everyone` rooms show mode in brackets: `[Kitchen — people]`; `everyone` rooms carry no annotation
+- **Inline mode labels** — non-`everyone` rooms show mode in brackets: `[lobby — people]`; `everyone` rooms carry no annotation
 - **Startup full catch-up** — on `run()`, `buildFullCatchUp()` lists every room with mode, participants, and unseen event lines; injected as the first delivery; re-injected post-compaction via `_needsFullCatchUp`
 - **Hot connect/disconnect** — rooms can be added/removed while running; on connect, agent receives "You've been added to [Room Name]" notification; notifications queued during delivery are drained after
 - **Silent connect/disconnect** — `Room.connect(…, silent: true)` and `channel.disconnect(silent: true)` suppress join/leave events
@@ -145,7 +143,6 @@ What's built, what works, what's planned. This is the source of truth for the fr
   - Compaction: `"🤖 Name's memory was refreshed"`
 - **Image-aware agent context** — image messages surfaced as native vision content blocks (`{ type: "image", url }`) in real-time events; tool outputs (`catch_up`, `search`) embed image URLs inline as `[[img:URL]]` text markers (vision blocks not supported in tool results yet)
 - **`participantLabel()`** — `👤 Name` for humans, `🤖 Name` for stoops
-- **`MODE_REMINDERS`** — per-mode label strings for room labels
 - **`contentPartsToString()`** — flattens `ContentPart[]` back to plain text (for trace logs)
 
 ---
@@ -180,12 +177,15 @@ What's built, what works, what's planned. This is the source of truth for the fr
 
 ## Tests
 
-- 122 tests passing, 1 skipped (LangGraph integration)
+- 219 tests passing, 1 skipped (LangGraph integration)
+- `event-processor.test.ts` — 55 tests: room connections, dedup, mode management, catch-up building, content buffering, processing lock, hot-connect, RoomResolver, compaction, ref map
 - `engagement.test.ts` — 59 tests: 52 `classifyEvent()` covering all modes and edge cases + 7 `StoopsEngagement` class tests
 - `room.test.ts` — 39 tests: connect/disconnect, message sending, @mention detection, observer behavior, pagination, event broadcasting
+- `format-event.test.ts` — 30 tests: all 12 event types, reply context, reactions, images, room labels, refs, null returns
 - `tool-handlers.test.ts` — 13 tests: room resolution, message formatting, catch-up building, search results
+- `multiplexer.test.ts` — 12 tests: channel add/remove, close, interleaving, labeled events
 - `ref-map.test.ts` — 8 tests: assignment idempotency, resolution, collision handling, clear/reset
-- `session-langgraph.test.ts` — 4 tests (1 skipped): startup, processing, token pricing
+- `session-langgraph.test.ts` — 4 tests (1 skipped): module exports, session creation, MCP server
 
 ---
 

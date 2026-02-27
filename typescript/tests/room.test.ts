@@ -140,6 +140,11 @@ describe("silent connect / disconnect", () => {
     expect(events[0].type).toBe("ParticipantJoined");
   });
 
+});
+
+// --- getMessage ---
+
+describe("getMessage", () => {
   test("getMessage returns message by id", async () => {
     const room = new Room("test");
     const ch = await room.connect("alice", "Alice");
@@ -430,6 +435,11 @@ describe("mention detection", () => {
     expect(mentionEvents).toHaveLength(1);
   });
 
+});
+
+// --- Observer ---
+
+describe("observer", () => {
   test("observer receives broadcast events (MessageSent, joins)", async () => {
     const room = new Room("test");
     const observer = room.observe();

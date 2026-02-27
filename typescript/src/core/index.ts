@@ -16,7 +16,9 @@ export {
   type MentionedEvent,
   type ContextCompactedEvent,
   createEvent,
+  EVENT_ROLE,
+  type EventRole,
 } from "./events.js";
-export { type StorageProtocol, InMemoryStorage, paginate, paginateByIndex } from "./storage.js";
+export { type StorageProtocol, InMemoryStorage } from "./storage.js";
 export { Channel } from "./channel.js";
 export { Room } from "./room.js";

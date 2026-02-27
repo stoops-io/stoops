@@ -35,11 +35,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  // stoops --help
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("Usage:");
+    console.log("  stoops [--room <name>] [--port <port>]           Start the room server");
+    console.log("  stoops run claude --room <name> [--name <name>]  Connect Claude Code to a room");
+    return;
+  }
+
   // stoops [--room <name>] [--port <port>]
   if (args.length === 0 || args[0]?.startsWith("--")) {
+    const portStr = getFlag("port");
     await serve({
       room: getFlag("room"),
-      port: getFlag("port") ? parseInt(getFlag("port")!, 10) : undefined,
+      port: portStr ? parseInt(portStr, 10) : undefined,
     });
     return;
   }

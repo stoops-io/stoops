@@ -68,7 +68,7 @@ export type ParticipantType = "human" | "stoop";
  * - `name`       — display name (mutable — participants can rename)
  * - `status`     — current presence status ("online", "offline", etc.)
  * - `type`       — "human" or "stoop" (agent)
- * - `identifier` — optional stable @-mention slug, e.g. "quinn".
+ * - `identifier` — optional stable @-mention slug, e.g. "my-agent".
  *                  Unlike `name`, this never changes on rename.
  *                  Used for @-mention matching in addition to the display name.
  *                  Not all participants have one — guests and anonymous users
