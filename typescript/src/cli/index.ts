@@ -5,7 +5,7 @@
  *
  * Usage:
  *   stoops [--room <name>] [--port <port>]          Start the room server
- *   stoops run claude --room <name> [--name <name>]  Connect Claude Code to a room
+ *   stoops run claude --room <name> [--name <name>] [--mcp full]  Connect Claude Code to a room
  */
 
 import { serve } from "./serve.js";
@@ -24,13 +24,14 @@ async function main(): Promise<void> {
   if (args[0] === "run" && args[1] === "claude") {
     const room = getFlag("room");
     if (!room) {
-      console.error("Usage: stoops run claude --room <name> [--name <name>] [--server <url>]");
+      console.error("Usage: stoops run claude --room <name> [--name <name>] [--server <url>] [--mcp full]");
       process.exit(1);
     }
     await runClaude({
       room,
       name: getFlag("name"),
       server: getFlag("server"),
+      mcp: getFlag("mcp") as "full" | undefined,
     });
     return;
   }
@@ -39,7 +40,7 @@ async function main(): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) {
     console.log("Usage:");
     console.log("  stoops [--room <name>] [--port <port>]           Start the room server");
-    console.log("  stoops run claude --room <name> [--name <name>]  Connect Claude Code to a room");
+    console.log("  stoops run claude --room <name> [--name <name>] [--mcp full]  Connect Claude Code");
     return;
   }
 
@@ -58,7 +59,7 @@ async function main(): Promise<void> {
   console.error("");
   console.error("Usage:");
   console.error("  stoops [--room <name>] [--port <port>]");
-  console.error("  stoops run claude --room <name> [--name <name>]");
+  console.error("  stoops run claude --room <name> [--name <name>] [--mcp full]");
   process.exit(1);
 }
 

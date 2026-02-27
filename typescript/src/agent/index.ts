@@ -6,5 +6,5 @@ export { formatEvent, participantLabel, messageRef, getSystemPreamble, contentPa
 export { EventProcessor, type EventProcessorOptions } from "./event-processor.js";
 export { EventMultiplexer, type LabeledEvent } from "./multiplexer.js";
 export { type EngagementMode, type EventDisposition, type EngagementStrategy, StoopsEngagement, classifyEvent } from "./engagement.js";
-export { createStoopsMcpServer, type StoopsMcpServer } from "./mcp-server.js";
+export { createFullMcpServer, createLiteMcpServer, type StoopsMcpServer } from "./mcp/index.js";
 export { RefMap } from "./ref-map.js";

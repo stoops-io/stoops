@@ -1,8 +1,10 @@
 /**
- * Stoops MCP server — one per stoop, all tools, single endpoint.
+ * Full MCP server — for embedded/API agents without filesystem access.
  *
  * Creates a proper MCP server using @modelcontextprotocol/sdk with
  * StreamableHTTP transport on a random localhost port.
+ *
+ * 4 tools: catch_up, search_by_text, search_by_message, send_message.
  *
  * Returns { url, instance, stop } where:
  *   url      — http://127.0.0.1:PORT/mcp (for any MCP-capable client)
@@ -12,13 +14,13 @@
 
 import { createServer } from "node:http";
 import { z } from "zod";
-import type { RoomResolver, ToolHandlerOptions } from "./types.js";
+import type { RoomResolver, ToolHandlerOptions } from "../types.js";
 import {
   handleCatchUp,
   handleSearchByText,
   handleSearchByMessage,
   handleSendMessage,
-} from "./tool-handlers.js";
+} from "../tool-handlers.js";
 
 export interface StoopsMcpServer {
   /** HTTP URL for URL-based MCP clients (e.g. LangGraph, external tools). */
@@ -34,10 +36,10 @@ export interface StoopsMcpServer {
 }
 
 /**
- * Start a stoops MCP server for one stoop.
+ * Start a full stoops MCP server (all 4 tools).
  * Call once per session start; call stop() on session stop.
  */
-export async function createStoopsMcpServer(
+export async function createFullMcpServer(
   resolver: RoomResolver,
   options: ToolHandlerOptions,
 ): Promise<StoopsMcpServer> {

@@ -1,23 +1,22 @@
 /**
  * stoops serve — room server process.
  *
- * Creates a room, hosts an HTTP API for agent registration + MCP tools,
+ * Creates a room, hosts an HTTP API for agent registration,
  * runs EventProcessor per agent with tmux injection, and provides a
  * readline interface for human chat.
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer } from "node:http";
 import { createInterface } from "node:readline";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 
 import { Room } from "../core/room.js";
 import { InMemoryStorage } from "../core/storage.js";
 import type { RoomEvent } from "../core/events.js";
 import { EventProcessor } from "../agent/event-processor.js";
+import { createFullMcpServer, createLiteMcpServer, type StoopsMcpServer } from "../agent/mcp/index.js";
 import { contentPartsToString, participantLabel, formatTimestamp } from "../agent/prompts.js";
 import { tmuxInjectText, tmuxSessionExists, tmuxSendEnter } from "./tmux.js";
 
@@ -31,37 +30,12 @@ interface ConnectedAgent {
   tmpDir: string;
   running: boolean;
   runPromise: Promise<void> | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mcpServer: any;
+  mcpServer: StoopsMcpServer | null;
 }
 
 export interface ServeOptions {
   room?: string;
   port?: number;
-}
-
-// ── Snapshot formatting ──────────────────────────────────────────────────────
-
-function formatSnapshotLine(event: RoomEvent): string {
-  const ts = formatTimestamp(new Date(event.timestamp));
-  switch (event.type) {
-    case "MessageSent": {
-      const msg = event.message;
-      const label = `${msg.sender_name}`;
-      if (msg.reply_to_id) {
-        return `[${ts}] MSG #${msg.id.slice(0, 4)} ${label} → #${msg.reply_to_id.slice(0, 4)}: ${msg.content}`;
-      }
-      return `[${ts}] MSG #${msg.id.slice(0, 4)} ${label}: ${msg.content}`;
-    }
-    case "ParticipantJoined":
-      return `[${ts}] JOIN ${event.participant.name}`;
-    case "ParticipantLeft":
-      return `[${ts}] LEFT ${event.participant.name}`;
-    case "ReactionAdded":
-      return `[${ts}] REACT ${event.participant_id} ${event.emoji} → #${event.message_id.slice(0, 4)}`;
-    default:
-      return `[${ts}] ${event.type}`;
-  }
 }
 
 // ── Main serve command ───────────────────────────────────────────────────────
@@ -93,131 +67,10 @@ export async function serve(options: ServeOptions): Promise<void> {
     }
   })();
 
-  // ── MCP server (per-agent tools) ────────────────────────────────────────
-
-  async function createCliMcpServer(agent: ConnectedAgent) {
-    const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-
-    const mcpServer = new McpServer(
-      { name: `stoops_${agent.id}`, version: "1.0.0" },
-    );
-
-    // ── send_message tool ──
-    mcpServer.tool(
-      "send_message",
-      "Send a message to the room. Only when you have something genuinely worth saying.",
-      {
-        content: z.string().describe("Message content"),
-        reply_to: z.string().optional()
-          .describe("Optional #ref of message to reply to (e.g. '3847')"),
-      },
-      async ({ content, reply_to }) => {
-        let replyToId: string | undefined;
-        if (reply_to) {
-          replyToId = agent.processor.resolveRef(reply_to.replace("#", ""));
-        }
-        const conn = agent.processor.resolve(roomName);
-        if (!conn) return { content: [{ type: "text" as const, text: "Room not connected." }] };
-        await conn.channel.sendMessage(content, replyToId);
-        return { content: [{ type: "text" as const, text: "Message sent." }] };
-      },
-    );
-
-    // ── snapshot_room tool ──
-    mcpServer.tool(
-      "snapshot_room",
-      "Get a searchable copy of the room's event history as a file. Use grep, tail, or Read on the returned path.",
-      {},
-      async () => {
-        const events = await room.listEvents(undefined, 1000);
-        const participants = room.listParticipants();
-
-        const pList = participants.map((p) =>
-          `${p.type === "stoop" ? "🤖" : "👤"} ${p.name}`
-        ).join(", ");
-
-        const lines: string[] = [];
-        lines.push(`=== ${roomName} ===`);
-        lines.push(`participants: ${pList}`);
-        lines.push(`snapshot: ${events.items.length} events`);
-        lines.push("===");
-        lines.push("");
-
-        // Events are newest-first from storage, reverse for chronological
-        for (const event of [...events.items].reverse()) {
-          lines.push(formatSnapshotLine(event));
-        }
-
-        const filePath = join(agent.tmpDir, `${roomName}.log`);
-        writeFileSync(filePath, lines.join("\n") + "\n");
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: [
-              `Snapshot written to: ${filePath}`,
-              `Events: ${events.items.length}`,
-              "",
-              "Tips:",
-              `  grep 'MSG.*keyword' ${filePath}     # search content`,
-              `  grep '#ref' ${filePath}              # find a message by ref`,
-              `  tail -n 50 ${filePath}               # recent events`,
-            ].join("\n"),
-          }],
-        };
-      },
-    );
-
-    return mcpServer;
-  }
-
-  async function handleMcpRequest(
-    agentId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const agent = agents.get(agentId);
-    if (!agent || !agent.mcpServer) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Agent not found" }));
-      return;
-    }
-
-    const { StreamableHTTPServerTransport } = await import(
-      "@modelcontextprotocol/sdk/server/streamableHttp.js"
-    );
-
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    await agent.mcpServer.connect(transport);
-
-    let body: unknown;
-    if (req.method === "POST") {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(chunk as Buffer);
-      try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { body = undefined; }
-    }
-
-    await transport.handleRequest(req, res, body);
-  }
-
   // ── HTTP API ────────────────────────────────────────────────────────────
 
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-
-    // MCP endpoint — /mcp?agent=<id>
-    if (url.pathname === "/mcp") {
-      const agentId = url.searchParams.get("agent");
-      if (!agentId) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Missing agent query param" }));
-        return;
-      }
-      await handleMcpRequest(agentId, req, res);
-      return;
-    }
 
     // JSON API
     if (req.method === "POST") {
@@ -229,7 +82,7 @@ export async function serve(options: ServeOptions): Promise<void> {
       if (url.pathname === "/join") {
         const name = String(body.name ?? `agent-${agents.size + 1}`);
         const agentId = `agent_${randomUUID().slice(0, 8)}`;
-        const tmpDir = join(tmpdir(), `stoops_${agentId}`);
+        const tmpDir = `${tmpdir()}/stoops_${agentId}`;
         mkdirSync(tmpDir, { recursive: true });
 
         // Create EventProcessor and connect to room (processor owns the channel)
@@ -237,6 +90,16 @@ export async function serve(options: ServeOptions): Promise<void> {
           defaultMode: "everyone",
         });
         await processor.connectRoom(room, roomName, "everyone");
+
+        const mcpMode = body.mcp === "full" ? "full" : "lite";
+        const toolOptions = {
+          assignRef: (id: string) => processor.assignRef(id),
+          resolveRef: (ref: string) => processor.resolveRef(ref),
+        };
+
+        const mcpServer = mcpMode === "full"
+          ? await createFullMcpServer(processor, toolOptions)
+          : await createLiteMcpServer(processor, toolOptions, tmpDir);
 
         const agent: ConnectedAgent = {
           id: agentId,
@@ -246,12 +109,11 @@ export async function serve(options: ServeOptions): Promise<void> {
           tmpDir,
           running: false,
           runPromise: null,
-          mcpServer: null,
+          mcpServer,
         };
-        agent.mcpServer = await createCliMcpServer(agent);
         agents.set(agentId, agent);
 
-        const mcpUrl = `http://127.0.0.1:${port}/mcp?agent=${agentId}`;
+        const mcpUrl = mcpServer.url;
 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ agentId, mcpUrl, tmpDir }));
@@ -291,6 +153,7 @@ export async function serve(options: ServeOptions): Promise<void> {
 
         if (agent) {
           agent.running = false;
+          await agent.mcpServer?.stop();
           await agent.processor.stop();
           agents.delete(agentId);
         }
@@ -346,6 +209,7 @@ export async function serve(options: ServeOptions): Promise<void> {
     rl.close();
     observer.disconnect();
     for (const agent of agents.values()) {
+      await agent.mcpServer?.stop();
       await agent.processor.stop();
     }
     await humanChannel.disconnect();

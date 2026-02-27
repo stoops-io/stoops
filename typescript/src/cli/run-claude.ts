@@ -19,6 +19,8 @@ export interface RunClaudeOptions {
   room: string;
   name?: string;
   server?: string;
+  /** "full" gives the agent all 4 MCP tools (catch_up, search, send_message). Default is lite (send_message + snapshot_room). */
+  mcp?: "full";
 }
 
 export async function runClaude(options: RunClaudeOptions): Promise<void> {
@@ -43,7 +45,7 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
     const res = await fetch(`${serverUrl}/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ room: options.room, name: agentName }),
+      body: JSON.stringify({ room: options.room, name: agentName, mcp: options.mcp }),
     });
 
     if (!res.ok) {

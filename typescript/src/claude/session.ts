@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { RoomResolver, ClaudeSessionOptions, ILLMSession, ContentPart } from "../agent/types.js";
 import { contentPartsToString } from "../agent/prompts.js";
-import { createStoopsMcpServer, type StoopsMcpServer } from "../agent/mcp-server.js";
+import { createFullMcpServer, type StoopsMcpServer } from "../agent/mcp/index.js";
 
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "claude-haiku-4-5-20251001":  200_000,
@@ -44,7 +44,7 @@ export class ClaudeSession implements ILLMSession {
 
   async start(): Promise<void> {
     this._sdk = await loadSDK();
-    this._mcpServer = await createStoopsMcpServer(this._resolver, {
+    this._mcpServer = await createFullMcpServer(this._resolver, {
       isEventSeen: this._options.isEventSeen,
       markEventsSeen: this._options.markEventsSeen,
       assignRef: this._options.assignRef,

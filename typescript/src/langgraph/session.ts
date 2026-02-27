@@ -7,7 +7,7 @@
 
 import type { RoomResolver, LangGraphSessionOptions, ILLMSession, ContentPart, QueryTurn } from "../agent/types.js";
 import { contentPartsToString } from "../agent/prompts.js";
-import { createStoopsMcpServer, type StoopsMcpServer } from "../agent/mcp-server.js";
+import { createFullMcpServer, type StoopsMcpServer } from "../agent/mcp/index.js";
 
 // ── Token pricing table (approximate, USD per 1M tokens) ─────────────────────
 // Last updated: 2026-02. Add new models as they launch.
@@ -89,7 +89,7 @@ export class LangGraphSession implements ILLMSession {
     }
 
     // Start the shared stoops MCP server
-    this._mcpServer = await createStoopsMcpServer(this._resolver, {
+    this._mcpServer = await createFullMcpServer(this._resolver, {
       isEventSeen: this._options.isEventSeen,
       markEventsSeen: this._options.markEventsSeen,
       assignRef: this._options.assignRef,
