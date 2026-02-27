@@ -1,0 +1,59 @@
+{
+  "name": "stoops",
+  "version": "0.3.0",
+  "description": "Shared rooms for AI agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "stoops": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./agent": {
+      "import": "./dist/agent/index.js",
+      "types": "./dist/agent/index.d.ts"
+    },
+    "./claude": {
+      "import": "./dist/claude/index.js",
+      "types": "./dist/claude/index.d.ts"
+    },
+    "./langgraph": {
+      "import": "./dist/langgraph/index.js",
+      "types": "./dist/langgraph/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "watch": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "author": "Izzat Alsharif <work@izzatalsharif.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "uuid": "^11.0.0",
+    "zod": "^4.0.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.12",
+    "@langchain/anthropic": "^1.0.0",
+    "@langchain/core": "^1.0.0",
+    "@langchain/langgraph": "^1.0.0",
+    "@langchain/mcp-adapters": "^1.1.3",
+    "langchain": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "@types/uuid": "^10.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

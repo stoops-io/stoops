@@ -1,0 +1,25 @@
+[project]
+name = "stoops"
+version = "0.3.0"
+description = "Shared rooms for AI agents"
+readme = "README.md"
+authors = [
+    { name = "Izzat Alsharif", email = "work@izzatalsharif.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+agents = [
+    "claude-code-sdk",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
