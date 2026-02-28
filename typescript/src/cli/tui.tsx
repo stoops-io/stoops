@@ -1,16 +1,18 @@
 /**
  * stoops TUI — ink-based terminal UI for the room server.
+ *
+ * Uses ink's <Static> for events (rendered once, selectable terminal text)
+ * and a dynamic footer for input + status. Same architecture as Claude Code.
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { render, Box, Text, useStdout, useInput } from "ink";
+import { render, Box, Text, Static, useStdout, useInput } from "ink";
 import TextInput from "ink-text-input";
 
 // ── Palette (from stoops-app) ─────────────────────────────────────────────────
 
 const C = {
   cyan:      "#00d4ff",
-  cyanSoft:  "#07b8de",
   purple:    "#8b5cf6",
   orange:    "#ff8c42",
   pink:      "#f472b6",
@@ -27,10 +29,24 @@ const C = {
 const AGENT_COLORS = [C.cyan, C.purple, C.orange, C.pink, C.green, C.yellow] as const;
 const SIGILS       = ["◆", "▲", "●", "■", "★", "◉", "◈", "▸"] as const;
 
+// ── Banner ───────────────────────────────────────────────────────────────────
+// Figlet "slant" font, colored with a purple → cyan gradient per line.
+
+const BANNER_LINES = [
+  "         __                        ",
+  "   _____/ /_____  ____  ____  _____",
+  "  / ___/ __/ __ \\/ __ \\/ __ \\/ ___/",
+  " (__  ) /_/ /_/ / /_/ / /_/ (__  ) ",
+  "/____/\\__/\\____/\\____/ .___/____/  ",
+  "                    /_/            ",
+];
+
+const GRADIENT = ["#9b6dff", "#7c8bff", "#5da8ff", "#3dc4ff", "#1ddcff", "#00e8ff"];
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type DisplayEvent =
-  | { id: string; ts: string; kind: "message"; senderName: string; senderType: "human" | "agent"; isSelf: boolean; content: string }
+  | { id: string; ts: string; kind: "message"; senderName: string; senderType: "human" | "agent"; isSelf: boolean; content: string; replyToName?: string }
   | { id: string; ts: string; kind: "join";    name: string; participantType: "human" | "agent" }
   | { id: string; ts: string; kind: "leave";   name: string; participantType: "human" | "agent" }
   | { id: string; ts: string; kind: "mode";    mode: string };
@@ -71,76 +87,6 @@ function makeIdentityAssigner(): (name: string) => { color: string; sigil: strin
   };
 }
 
-// ── Topographic animation ─────────────────────────────────────────────────────
-
-const TOPO_W          = 44;
-const TOPO_H_DEFAULT  = 13;
-const TOPO_H_MIN      = 5;
-const TOPO_ASPECT     = 2.1;
-
-const TOPO_LEVELS = [
-  { char: " ", color: "" },
-  { char: " ", color: "" },
-  { char: " ", color: "" },
-  { char: "·", color: C.muted },
-  { char: "·", color: C.dim },
-  { char: ":", color: C.dim },
-  { char: "─", color: C.secondary },
-  { char: "▒", color: C.secondary },
-  { char: "●", color: C.cyan },
-] as const;
-
-type Seg = { text: string; color: string };
-
-function computeTopoLine(y: number, phase: number, h: number): Seg[] {
-  const cx = TOPO_W / 2;
-  const cy = h / 2;
-  const dy = ((y - cy) / (h * 0.5)) * TOPO_ASPECT;
-  const cells: Array<{ char: string; color: string }> = [];
-
-  for (let x = 0; x < TOPO_W; x++) {
-    const dx = (x - cx) / (TOPO_W * 0.5);
-    const r  = Math.sqrt(dx * dx + dy * dy);
-    const θ  = Math.atan2(dy, dx);
-    const wave =
-      Math.sin(r * 9.5 - phase)       * 0.55 +
-      Math.sin(r * 4.5 - phase * 0.6) * 0.28 +
-      Math.cos(θ * 2   + phase * 0.4) * 0.17;
-    const val  = (wave + 1) / 2;
-    const fade = Math.max(0, 1 - r * 1.12);
-    const idx  = Math.min(TOPO_LEVELS.length - 1, Math.floor(val * fade * TOPO_LEVELS.length));
-    cells.push(TOPO_LEVELS[idx]);
-  }
-
-  const segs: Seg[] = [];
-  for (const c of cells) {
-    const last = segs[segs.length - 1];
-    if (last && last.color === c.color) last.text += c.char;
-    else segs.push({ text: c.char, color: c.color });
-  }
-  return segs;
-}
-
-function TopoAnimation({ height }: { height: number }) {
-  const [phase, setPhase] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setPhase((p) => p + 0.1), 80);
-    return () => clearInterval(id);
-  }, []);
-
-  return (
-    <Box flexDirection="column" alignItems="center">
-      {Array.from({ length: height }, (_, y) => (
-        <Box key={y}>
-          {computeTopoLine(y, phase, height).map((seg, i) => (
-            <Text key={i} color={seg.color || undefined}>{seg.text}</Text>
-          ))}
-        </Box>
-      ))}
-    </Box>
-  );
-}
-
 // ── Event line ────────────────────────────────────────────────────────────────
 
 const NAME_COL = 12;
@@ -161,16 +107,24 @@ function EventLine({
     const nameColor  = isSelf ? C.text : event.senderType === "agent" ? color : C.secondary;
     const sigilColor = isSelf ? C.dim  : event.senderType === "agent" ? color : C.dim;
     const sigilChar  = isSelf ? "›" : event.senderType === "agent" ? sigil : "·";
+    const contentColor = isSelf ? C.text : C.secondary;
 
     return (
-      <Box>
-        {ts}
-        <Text color={sigilColor}>{sigilChar}{" "}</Text>
-        <Text color={nameColor} bold={isSelf}>
-          {event.senderName.slice(0, NAME_COL).padEnd(NAME_COL)}
-        </Text>
-        <Text>{"  "}</Text>
-        <Text color={isSelf ? C.text : C.secondary}>{event.content}</Text>
+      <Box paddingX={1}>
+        <Box flexShrink={0}>
+          {ts}
+          <Text color={sigilColor}>{sigilChar}{" "}</Text>
+          <Text color={nameColor} bold={isSelf}>
+            {event.senderName.slice(0, NAME_COL).padEnd(NAME_COL)}
+          </Text>
+          <Text>{"  "}</Text>
+        </Box>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="wrap">
+            {event.replyToName && <Text color={C.dim}>{"→ "}{event.replyToName}{" "}</Text>}
+            <Text color={contentColor}>{event.content}</Text>
+          </Text>
+        </Box>
       </Box>
     );
   }
@@ -180,7 +134,7 @@ function EventLine({
     const isAgent = event.participantType === "agent";
     const { color, sigil } = isAgent ? identify(event.name) : { color: C.dim, sigil: "·" };
     return (
-      <Box>
+      <Box paddingX={1}>
         {ts}
         <Text color={isAgent ? color : C.dim}>{sigil}{" "}</Text>
         <Text color={isAgent ? color : C.dim}>{event.name}</Text>
@@ -194,7 +148,7 @@ function EventLine({
     const isAgent = event.participantType === "agent";
     const { color: nameColor } = isAgent ? identify(event.name) : { color: C.muted };
     return (
-      <Box>
+      <Box paddingX={1}>
         {ts}
         <Text color={C.muted}>{"· "}</Text>
         <Text color={nameColor}>{event.name}</Text>
@@ -206,7 +160,7 @@ function EventLine({
   // ── Mode change ──
   if (event.kind === "mode") {
     return (
-      <Box>
+      <Box paddingX={1}>
         {ts}
         <Text color={C.dim}>{"mode → "}</Text>
         <Text color={C.yellow} bold>{event.mode}</Text>
@@ -217,44 +171,6 @@ function EventLine({
   return null;
 }
 
-// ── Header ────────────────────────────────────────────────────────────────────
-
-function Header({
-  roomName,
-  serverUrl,
-  agentNames,
-  identify,
-}: {
-  roomName: string;
-  serverUrl: string;
-  agentNames: string[];
-  identify: (n: string) => { color: string; sigil: string };
-}) {
-  return (
-    <Box paddingX={1}>
-      <Text color={C.cyan} bold>{"stoops"}</Text>
-      <Text color={C.border}>{"  ·  "}</Text>
-      <Text color={C.text} bold>{roomName}</Text>
-      <Text color={C.border}>{"  ·  "}</Text>
-      <Text color={C.muted}>{serverUrl}</Text>
-      {agentNames.length > 0 && (
-        <>
-          <Text color={C.border}>{"  ·  "}</Text>
-          {agentNames.map((name, i) => {
-            const { color, sigil } = identify(name);
-            return (
-              <React.Fragment key={name}>
-                {i > 0 && <Text color={C.border}>{", "}</Text>}
-                <Text color={color}>{sigil} {name}</Text>
-              </React.Fragment>
-            );
-          })}
-        </>
-      )}
-    </Box>
-  );
-}
-
 // ── Internal bridge ───────────────────────────────────────────────────────────
 
 interface AppHandle {
@@ -263,6 +179,8 @@ interface AppHandle {
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
+
+type StaticEntry = { id: string; event?: DisplayEvent };
 
 function App({
   roomName,
@@ -292,6 +210,7 @@ function App({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-render footer on resize (divider width)
   const [, setTick] = useState(0);
   useEffect(() => {
     const onResize = () => setTick((t) => t + 1);
@@ -303,78 +222,64 @@ function App({
     if (key.ctrl && char === "c") onCtrlC?.();
   });
 
-  const rows = stdout.rows ?? 24;
   const cols = stdout.columns ?? 80;
 
-  // ── Responsive breakpoints ──
-  // Progressively hide UI chrome as the terminal shrinks.
-  const showDividers = rows >= 10;
-  const fixedRows    = 2 + (showDividers ? 2 : 0);  // header(1) + input(1) + dividers(0|2)
-  const contentH     = Math.max(1, rows - fixedRows);
-  const divider      = showDividers ? "─".repeat(Math.max(0, cols - 2)) : "";
-
-  const hasMessages = events.some((e) => e.kind === "message");
-
-  // Topo: scale height to fit, hide entirely if too cramped
-  const topoH     = Math.min(TOPO_H_DEFAULT, Math.max(0, contentH - 4));
-  const showTopo   = !hasMessages && topoH >= TOPO_H_MIN;
-  const showHints  = showTopo && agentNames.length === 0 && contentH >= topoH + 6;
-  const showEvents = !hasMessages && events.length > 0 && contentH >= topoH + 2;
-
-  // Message feed capacity
-  const msgCapacity  = Math.max(1, contentH - 1);  // -1 buffer
-  const hasOverflow  = hasMessages && events.length > msgCapacity;
-  const visibleCount = hasOverflow ? msgCapacity - 1 : msgCapacity;
-  const visible      = events.slice(-visibleCount);
+  // Static items: banner (rendered once) + events (appended over time)
+  const entries: StaticEntry[] = useMemo(
+    () => [{ id: "__banner__" }, ...events.map((e) => ({ id: e.id, event: e }))],
+    [events],
+  );
 
   return (
-    <Box flexDirection="column" height={rows}>
-
-      <Header roomName={roomName} serverUrl={serverUrl} agentNames={agentNames} identify={identify} />
-      {showDividers && <Text color={C.border}>{divider}</Text>}
-
-      {/* ── Main content ── */}
-      <Box flexGrow={1} flexDirection="column">
-        {!hasMessages ? (
-          // Idle state
-          <Box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center">
-            {showTopo && <TopoAnimation height={topoH} />}
-
-            {showEvents && (
-              <Box marginTop={showTopo ? 1 : 0} flexDirection="column" alignItems="center">
-                {events.slice(-(Math.min(6, contentH - topoH - (showHints ? 4 : 1)))).map((ev) => (
-                  <EventLine key={ev.id} event={ev} identify={identify} />
+    <>
+      {/* Permanent output — rendered once, selectable terminal text */}
+      <Static items={entries}>
+        {(entry) => {
+          if (!entry.event) {
+            return (
+              <Box key={entry.id} flexDirection="column" paddingX={2} paddingTop={1} paddingBottom={1}>
+                {BANNER_LINES.map((line, i) => (
+                  <Text key={i} color={GRADIENT[i]}>{line}</Text>
                 ))}
-              </Box>
-            )}
-
-            {showHints && (
-              <Box marginTop={1} flexDirection="column" alignItems="center">
-                <Text color={C.muted}>{"connect an agent:"}</Text>
+                <Text>{" "}</Text>
                 <Text>
-                  <Text color={C.dim}>{"  stoops run claude --room "}</Text>
-                  <Text color={C.text}>{roomName}</Text>
+                  <Text color={C.dim}>{"  room     "}</Text>
+                  <Text color={C.cyan}>{roomName}</Text>
+                </Text>
+                <Text>
+                  <Text color={C.dim}>{"  server   "}</Text>
+                  <Text color={C.muted}>{serverUrl}</Text>
+                </Text>
+                <Text>
+                  <Text color={C.dim}>{"  connect  "}</Text>
+                  <Text color={C.secondary}>{`stoops run claude --room ${roomName}`}</Text>
                 </Text>
               </Box>
-            )}
-          </Box>
-        ) : (
-          // Message feed
-          <>
-            {hasOverflow && (
-              <Box paddingX={2}>
-                <Text color={C.muted}>{"↑ "}{events.length - visibleCount}{" more"}</Text>
-              </Box>
-            )}
-            <Box flexGrow={1} />
-            {visible.map((ev) => (
-              <EventLine key={ev.id} event={ev} identify={identify} />
-            ))}
-          </>
-        )}
-      </Box>
+            );
+          }
+          return <EventLine key={entry.id} event={entry.event} identify={identify} />;
+        }}
+      </Static>
 
-      {showDividers && <Text color={C.border}>{divider}</Text>}
+      {/* Dynamic footer — only this area repaints */}
+      <Box paddingX={1}>
+        <Text color={C.purple}>{"─"}</Text>
+        <Text color={C.border}>{"─".repeat(Math.max(0, cols - 4))}</Text>
+        <Text color={C.cyan}>{"─"}</Text>
+      </Box>
+      {agentNames.length > 0 && (
+        <Box paddingX={1}>
+          {agentNames.map((name, i) => {
+            const { color, sigil } = identify(name);
+            return (
+              <React.Fragment key={name}>
+                {i > 0 && <Text color={C.border}>{"  ·  "}</Text>}
+                <Text color={color}>{sigil}{" "}{name}</Text>
+              </React.Fragment>
+            );
+          })}
+        </Box>
+      )}
       <Box paddingX={1}>
         <Text color={C.cyan} bold>{"› "}</Text>
         <TextInput
@@ -387,8 +292,7 @@ function App({
           }}
         />
       </Box>
-
-    </Box>
+    </>
   );
 }
 

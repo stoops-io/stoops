@@ -135,7 +135,7 @@ export async function serve(options: ServeOptions): Promise<void> {
     try {
       for await (const event of observer) {
         if (tui) {
-          pushEventToTUI(tui, event, room);
+          await pushEventToTUI(tui, event, room);
         } else {
           printEvent(event, roomName, room);
         }
@@ -333,6 +333,18 @@ export async function serve(options: ServeOptions): Promise<void> {
     res.writeHead(404).end("Not found");
   });
 
+  httpServer.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      tui?.stop();
+      rl?.close();
+      console.error(`\nPort ${port} is already in use. Another stoops instance may be running.`);
+      console.error(`  Kill it:   lsof -ti :${port} | xargs kill`);
+      console.error(`  Or use:    stoops --port ${port + 1}\n`);
+      process.exit(1);
+    }
+    throw err;
+  });
+
   httpServer.listen(port, "127.0.0.1", () => {
     if (!useTUI) {
       const version = process.env.npm_package_version ?? "0.3.0";
@@ -371,13 +383,20 @@ export async function serve(options: ServeOptions): Promise<void> {
 
 // ── TUI event bridge ─────────────────────────────────────────────────────────
 
-function pushEventToTUI(tui: TUIHandle, event: RoomEvent, room: Room): void {
+async function pushEventToTUI(tui: TUIHandle, event: RoomEvent, room: Room): Promise<void> {
   const ts = formatTimestamp(new Date(event.timestamp));
 
   switch (event.type) {
     case "MessageSent": {
       const msg = event.message;
       const sender = room.listParticipants().find((p) => p.id === msg.sender_id);
+
+      let replyToName: string | undefined;
+      if (msg.reply_to_id) {
+        const replyMsg = await room.getMessage(msg.reply_to_id);
+        if (replyMsg) replyToName = replyMsg.sender_name;
+      }
+
       const displayEvent: DisplayEvent = {
         id: msg.id,
         ts,
@@ -386,6 +405,7 @@ function pushEventToTUI(tui: TUIHandle, event: RoomEvent, room: Room): void {
         senderType: sender?.type ?? "human",
         isSelf: msg.sender_name === "you",
         content: msg.content,
+        replyToName,
       };
       tui.push(displayEvent);
       break;
