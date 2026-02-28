@@ -449,7 +449,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Message feed** — `<Static>` items rendered once (selectable terminal text)
 - **Color system** — stoops-app palette; agents get rotating color + deterministic sigil
 - **System events** — rendered in `C.secondary` color for slash command output
-- **Slash command autocomplete** — typing `/` shows filtered command list with descriptions below the input line; arrow keys navigate, Enter/Tab completes, Escape dismisses; admin-only commands hidden for non-admins; 7 commands: `/who`, `/leave`, `/share`, `/kick`, `/mute`, `/wake`, `/setmode`
+- **Slash command autocomplete** — two-phase completion system: (1) typing `/` shows filtered command list with param hints (e.g. `/kick <name>`, `/setmode <name> <mode>`) and descriptions; (2) after completing a command, suggests parameter values — participant names for `<name>` params (dynamically tracked from join/leave events), engagement modes for `<mode>` param. Ghost text hints show unfilled params inline after the cursor. Arrow keys navigate, Tab completes, Enter completes (or submits directly for no-param commands), Escape dismisses; admin-only commands hidden for non-admins; 7 commands: `/who`, `/leave`, `/share`, `/kick`, `/mute`, `/wake`, `/setmode`
 - **Ctrl+C handling** — ink's default exit disabled; custom `useInput` handler calls `onCtrlC`
 - **No resize handler** — removed to prevent Ink `<Static>` cursor miscalculation and screen corruption on terminal resize; divider width updates naturally on next state change
 

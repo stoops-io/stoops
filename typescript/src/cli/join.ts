@@ -325,13 +325,17 @@ export async function join(options: JoinOptions): Promise<void> {
     },
   });
 
-  // Set initial agent names
+  // Set initial agent names + participant names
   const agentNames = participants
     .filter((p) => p.type === "agent")
     .map((p) => p.name);
   if (agentNames.length > 0) {
     tui.setAgentNames(agentNames);
   }
+  const participantNames = new Set(
+    participants.filter((p) => p.id !== participantId).map((p) => p.name),
+  );
+  tui.setParticipants([...participantNames]);
 
   // ── Connect SSE event stream ────────────────────────────────────────────
   // ⚠️  MUST use POST — DO NOT change to GET.
@@ -395,16 +399,24 @@ export async function join(options: JoinOptions): Promise<void> {
                 tui.push(displayEvent);
               }
 
-              if (event.type === "ParticipantJoined" && event.participant.type === "agent") {
-                currentAgents.add(event.participant.name);
-                tui.setAgentNames([...currentAgents]);
-              }
-              if (event.type === "ParticipantLeft" && event.participant.type === "agent") {
-                currentAgents.delete(event.participant.name);
-                tui.setAgentNames([...currentAgents]);
+              if (event.type === "ParticipantJoined") {
+                if (event.participant.type === "agent") {
+                  currentAgents.add(event.participant.name);
+                  tui.setAgentNames([...currentAgents]);
+                }
+                if (event.participant.id !== participantId) {
+                  participantNames.add(event.participant.name);
+                  tui.setParticipants([...participantNames]);
+                }
               }
               if (event.type === "ParticipantLeft") {
+                if (event.participant.type === "agent") {
+                  currentAgents.delete(event.participant.name);
+                  tui.setAgentNames([...currentAgents]);
+                }
                 participantTypes.delete(event.participant.id);
+                participantNames.delete(event.participant.name);
+                tui.setParticipants([...participantNames]);
               }
             } catch {
               // Malformed event — skip

@@ -44,23 +44,43 @@ const GRADIENT = ["#9b6dff", "#7c8bff", "#5da8ff", "#3dc4ff", "#1ddcff", "#00e8f
 
 // ── Slash commands ────────────────────────────────────────────────────────────
 
+interface SlashParam {
+  label: string;                             // display hint: "name", "mode", etc.
+  completions?: string[] | "participants";   // static values, dynamic lookup, or undefined (hint only)
+}
+
 interface SlashCommand {
   name: string;
   description: string;
   adminOnly?: boolean;
+  params?: SlashParam[];
 }
+
+const ENGAGEMENT_MODES = [
+  "everyone", "people", "agents", "me",
+  "standby-everyone", "standby-people", "standby-agents", "standby-me",
+];
 
 const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/who",     description: "List participants" },
   { name: "/leave",   description: "Disconnect and exit" },
   { name: "/share",   description: "Generate share links" },
-  { name: "/kick",    description: "Remove a participant", adminOnly: true },
-  { name: "/mute",    description: "Mute a participant", adminOnly: true },
-  { name: "/wake",    description: "Wake a participant", adminOnly: true },
-  { name: "/setmode", description: "Set engagement mode", adminOnly: true },
+  { name: "/kick",    description: "Remove a participant", adminOnly: true, params: [
+    { label: "name", completions: "participants" },
+  ]},
+  { name: "/mute",    description: "Mute a participant", adminOnly: true, params: [
+    { label: "name", completions: "participants" },
+  ]},
+  { name: "/wake",    description: "Wake a participant", adminOnly: true, params: [
+    { label: "name", completions: "participants" },
+  ]},
+  { name: "/setmode", description: "Set engagement mode", adminOnly: true, params: [
+    { label: "name", completions: "participants" },
+    { label: "mode", completions: ENGAGEMENT_MODES },
+  ]},
 ];
 
-const CMD_COL = 12; // fixed width for command name column
+const CMD_DISPLAY_COL = 26; // width for command + params display column
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -74,6 +94,7 @@ export type DisplayEvent =
 export interface TUIHandle {
   push(event: DisplayEvent): void;
   setAgentNames(names: string[]): void;
+  setParticipants(names: string[]): void;
   stop(): void;
 }
 
@@ -208,6 +229,7 @@ function EventLine({
 interface AppHandle {
   push: (event: DisplayEvent) => void;
   setAgentNames: (names: string[]) => void;
+  setParticipants: (names: string[]) => void;
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -231,6 +253,7 @@ function App({
 }) {
   const [events,        setEvents]        = useState<DisplayEvent[]>([]);
   const [agentNames,    setAgentNames]    = useState<string[]>([]);
+  const [participants,  setParticipants]  = useState<string[]>([]);
   const [input,         setInput]         = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const { stdout } = useStdout();
@@ -241,7 +264,7 @@ function App({
   }, []);
 
   useEffect(() => {
-    onReady({ push, setAgentNames });
+    onReady({ push, setAgentNames, setParticipants });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -252,19 +275,79 @@ function App({
 
   // ── Slash command suggestions ──────────────────────────────────────────────
 
-  // Only the command prefix (before first space) drives suggestions
-  const cmdPrefix = input.startsWith("/") && !input.includes(" ") ? input.toLowerCase() : null;
+  type SuggestionItem =
+    | { kind: "command"; cmd: SlashCommand; insert: string }
+    | { kind: "param";   value: string;     insert: string };
 
-  const suggestions = useMemo(() => {
-    if (!cmdPrefix) return [];
-    return SLASH_COMMANDS.filter((cmd) => {
-      if (cmd.adminOnly && !isAdmin) return false;
-      return cmd.name.startsWith(cmdPrefix);
-    });
-  }, [cmdPrefix, isAdmin]);
+  const suggestionState = useMemo((): { items: SuggestionItem[]; ghostHint: string } => {
+    if (!input.startsWith("/")) return { items: [], ghostHint: "" };
 
-  // Reset selection when the filter changes
-  useEffect(() => { setSelectedIndex(0); }, [cmdPrefix]);
+    const spaceIdx = input.indexOf(" ");
+
+    // Phase 1: completing command name (no space yet)
+    if (spaceIdx === -1) {
+      const prefix = input.toLowerCase();
+      const items: SuggestionItem[] = SLASH_COMMANDS
+        .filter((cmd) => {
+          if (cmd.adminOnly && !isAdmin) return false;
+          return cmd.name.startsWith(prefix);
+        })
+        .map((cmd) => ({
+          kind: "command" as const,
+          cmd,
+          insert: cmd.name + " ",
+        }));
+      return { items, ghostHint: "" };
+    }
+
+    // Phase 2: completing params
+    const cmdName = input.slice(0, spaceIdx).toLowerCase();
+    const cmd = SLASH_COMMANDS.find((c) => c.name === cmdName && (!c.adminOnly || isAdmin));
+    if (!cmd?.params) return { items: [], ghostHint: "" };
+
+    const rest = input.slice(spaceIdx + 1);
+    const words = rest.split(/\s+/);
+    const hasTrailingSpace = rest.endsWith(" ") || rest === "";
+    const completedCount = hasTrailingSpace
+      ? words.filter(Boolean).length
+      : Math.max(0, words.length - 1);
+    const currentPrefix = hasTrailingSpace ? "" : (words[words.length - 1] ?? "").toLowerCase();
+    const paramIdx = completedCount;
+
+    // All params filled
+    if (paramIdx >= cmd.params.length) return { items: [], ghostHint: "" };
+
+    const param = cmd.params[paramIdx];
+
+    // Ghost hint: remaining unfilled params (skip current if partially typed)
+    const ghostStart = currentPrefix ? paramIdx + 1 : paramIdx;
+    const ghostHint = cmd.params.slice(ghostStart).map((p) => `<${p.label}>`).join(" ");
+
+    // No completions defined — hint only
+    if (!param.completions) return { items: [], ghostHint };
+
+    const values = param.completions === "participants" ? participants : param.completions;
+    const filtered = currentPrefix
+      ? values.filter((v) => v.toLowerCase().startsWith(currentPrefix))
+      : values;
+
+    // Build insert string: full command up to current param + selected value
+    const completedWords = words.slice(0, completedCount).filter(Boolean);
+    const base = cmdName + (completedWords.length ? " " + completedWords.join(" ") : "") + " ";
+
+    const items: SuggestionItem[] = filtered.map((v) => ({
+      kind: "param" as const,
+      value: v,
+      insert: base + v + " ",
+    }));
+
+    return { items, ghostHint };
+  }, [input, isAdmin, participants]);
+
+  const suggestions = suggestionState.items;
+
+  // Reset selection when input changes (arrow keys don't change input)
+  useEffect(() => { setSelectedIndex(0); }, [input]);
 
   // ── Keyboard ───────────────────────────────────────────────────────────────
   // Single useInput handles everything — no TextInput, no dual-handler conflicts.
@@ -285,7 +368,14 @@ function App({
       }
       if (key.return || key.tab) {
         const picked = suggestions[selectedIndex];
-        if (picked) setInput(picked.name + " ");
+        if (!picked) return;
+        // No-param command + Enter → submit directly
+        if (key.return && picked.kind === "command" && !picked.cmd.params) {
+          onSend(picked.cmd.name);
+          setInput("");
+          return;
+        }
+        setInput(picked.insert);
         return;
       }
       if (key.escape) {
@@ -389,6 +479,9 @@ function App({
               <Text>
                 {line}
                 {i === arr.length - 1 && <Text inverse>{" "}</Text>}
+                {i === arr.length - 1 && suggestionState.ghostHint !== "" && (
+                  <Text color={C.muted}>{suggestionState.ghostHint}</Text>
+                )}
               </Text>
             </Box>
           ))}
@@ -397,15 +490,32 @@ function App({
       {/* Slash command suggestions — below input */}
       {suggestions.length > 0 && (
         <Box flexDirection="column" paddingX={1}>
-          {suggestions.map((cmd, i) => {
+          {suggestions.map((s, i) => {
             const selected = i === selectedIndex;
+            if (s.kind === "command") {
+              const paramHint = s.cmd.params
+                ? " " + s.cmd.params.map((p) => `<${p.label}>`).join(" ")
+                : "";
+              const display = s.cmd.name + paramHint;
+              return (
+                <Box key={s.cmd.name}>
+                  <Text color={selected ? C.cyan : C.muted}>{selected ? "› " : "  "}</Text>
+                  <Text>
+                    <Text color={selected ? C.cyan : C.secondary} bold={selected}>
+                      {s.cmd.name}
+                    </Text>
+                    <Text color={C.muted}>
+                      {paramHint.padEnd(CMD_DISPLAY_COL - display.length + paramHint.length)}
+                    </Text>
+                  </Text>
+                  <Text color={C.dim}>{s.cmd.description}</Text>
+                </Box>
+              );
+            }
             return (
-              <Box key={cmd.name}>
-                <Text color={selected ? C.cyan : C.muted}>{selected ? "* " : "  "}</Text>
-                <Text color={selected ? C.cyan : C.secondary} bold={selected}>
-                  {cmd.name.padEnd(CMD_COL)}
-                </Text>
-                <Text color={C.dim}>{cmd.description}</Text>
+              <Box key={s.value}>
+                <Text color={selected ? C.cyan : C.muted}>{selected ? "› " : "  "}</Text>
+                <Text color={selected ? C.cyan : C.secondary} bold={selected}>{s.value}</Text>
               </Box>
             );
           })}
@@ -445,6 +555,9 @@ export function startTUI(opts: TUIOptions): TUIHandle {
     },
     setAgentNames(names) {
       handle?.setAgentNames(names);
+    },
+    setParticipants(names) {
+      handle?.setParticipants(names);
     },
     stop() {
       unmount();
