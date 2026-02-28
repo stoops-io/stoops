@@ -34,29 +34,39 @@ stoops/
 
 ## CLI
 
-Requires: `tmux` installed, `claude` CLI installed.
+Requires: `tmux` installed (for agents), `claude` CLI installed (for Claude agents). Optional: `cloudflared` (for `--share`).
 
 ```bash
 cd typescript && npm run build     # build first
 ```
 
-**Terminal 1 — start a room:**
+**Terminal 1 — host a room:**
 ```bash
-npx stoops --room lobby            # TUI mode (ink-based UI)
-npx stoops --room lobby --headless # headless mode (plain log output)
+npx stoops --room lobby            # start server + join the TUI
+npx stoops --room lobby --share    # same but with a shareable tunnel URL
 ```
-TUI mode (default): ink-based terminal UI with header, topographic idle animation, colored message feed, and input field. Headless mode: plain event log to stdout with readline input — useful for agents running the room or piped output.
+Starts the server and opens the chat TUI in one command. With `--share`, spawns a cloudflared tunnel and prints a public URL.
 
 **Terminal 2 — connect Claude Code:**
 ```bash
 npx stoops run claude --room lobby
+npx stoops run claude --room lobby --server https://xyz.trycloudflare.com
 ```
-This registers with the server, adds an MCP server to Claude Code, launches `claude` inside an invisible tmux session, and attaches you to it. Room events are injected via `tmux send-keys`. On exit, MCP config and tmux session are cleaned up.
+Registers with the server, launches `claude` in a tmux session with MCP tools, attaches you to it. Events injected via `tmux send-keys`. Cleaned up on exit.
 
-**Options:**
+**Remote join (from another machine):**
 ```bash
-npx stoops --room <name> --port <port> [--headless]
-npx stoops run claude --room <name> --name <agent-name> --server <url>
+npx stoops join https://xyz.trycloudflare.com              # join via tunnel
+npx stoops join https://xyz.trycloudflare.com --guest      # watch as guest (read-only)
+```
+Opens the TUI connected to a remote server. Events stream via SSE; messages sent via HTTP.
+
+**All commands:**
+```bash
+npx stoops [--room <name>] [--port <port>] [--share]                    # host + join
+npx stoops serve [--room <name>] [--port <port>] [--share]              # headless server only
+npx stoops join <url> [--name <name>] [--guest]                         # join an existing room
+npx stoops run claude --room <name> [--name <agent-name>] [--server <url>]  # connect agent
 ```
 
 **MCP tools available to the agent:**
@@ -66,7 +76,7 @@ npx stoops run claude --room <name> --name <agent-name> --server <url>
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (228 passing)
+cd typescript && npm test          # run tests (229 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```
@@ -303,35 +313,76 @@ What's built, what works, what's planned. **Always update this section after imp
 
 ### CLI (`typescript/src/cli/`)
 
-#### `stoops` command (`serve.ts`)
+#### Architecture
 
-- **Room server** — creates in-memory room (`InMemoryStorage`), holds all state in one process
-- **Two display modes**:
-  - **TUI mode** (default when stdout is a TTY) — ink-based terminal UI (`tui.tsx`) with header bar, scrollable message feed, input field, and topographic idle animation; human input via ink `TextInput`
-  - **Headless mode** (`--headless` flag or non-TTY stdout) — plain `console.log` event output; human input via readline; suitable for agents running the room or piped output
-- **TUI features** (`tui.tsx`):
-  - **Header** — `stoops · room-name · url · ◆ agent1, ▲ agent2`; agent names colored with palette; sigils seeded from agent name (same `hash(seed)` approach as StoopFace)
-  - **Idle state** — topographic contour animation (rotating concentric rings via wave interference: `sin(r*freq - phase)`) centered in message area; system events (join/leave/mode) shown below animation; switches to message feed on first chat message
-  - **Message feed** — messages bottom-aligned via flexbox spacer; `↑ N more` overflow indicator when history exceeds visible capacity; `height={rows}` root constraint via Yoga layout
-  - **Color system** — stoops-app palette (`#00d4ff` cyan, `#8b5cf6` purple, `#ff8c42` orange, `#f472b6` pink, `#34d399` green, `#fbbf24` yellow); agents get rotating color + deterministic sigil; colored keywords: "joined" green, "left" red, mode name yellow bold
-  - **Identity assigner** — `makeIdentityAssigner()` maps agent names to `{ color, sigil }` pairs; color rotates through palette, sigil seeded by `hash(name) % SIGILS.length`
-  - **Ctrl+C handling** — ink's default exit disabled (`exitOnCtrlC: false`); custom `useInput` handler calls `onCtrlC` callback for graceful async shutdown
-  - **Resize handling** — `stdout.on('resize')` triggers re-render; row/col counts recalculated; divider width = `cols - 2` (prevents line-wrap overflow)
-  - **External bridge** — `startTUI()` returns `TUIHandle` with `push(event)`, `setAgentNames(names)`, `stop()`; events queued before React mount, drained on `onReady`
+The CLI separates **server** from **client**. The server (`stoops serve`) is always headless — it runs the room and exposes an HTTP API. Humans join via `stoops join`, which opens a TUI client connected over HTTP. Agents join via `stoops run claude`, which connects via tmux + MCP. This separation means multiple humans and agents on different machines can all connect to the same room.
+
+The bare `stoops` command (no subcommand) is a convenience shortcut: it starts the server then immediately joins it locally as a human, opening the TUI — one command for the common case.
+
+#### `stoops` (bare) command (`index.ts`)
+
+- **Host + join in one command** — starts the server with `quiet: true` (suppresses server stdout), waits for it to be ready, then calls `join()` pointing at `localhost`
+- **Tunnel stays local** — when `--share` is used, the host always joins via `http://127.0.0.1:PORT` (not through the tunnel); the tunnel URL is passed to the TUI as `shareUrl` for display in the banner
+- **`--share` banner** — TUI banner shows `share` + `stoops join <tunnelUrl>` so the host can copy and send to a friend; without `--share`, shows `stoops join <localUrl>`
+- **Flag bug fix** — `getFlag()` rejects values starting with `--` (prevents `--room --share` from setting roomName to `"--share"`)
+
+#### `stoops serve` command (`serve.ts`)
+
+- **Headless room server** — creates in-memory room (`InMemoryStorage`), holds all state in one process; no TUI, no human participant; prints server URL and connection commands to stdout
+- **Listens on `0.0.0.0`** — accepts connections from any interface (required for tunnel/remote access)
+- **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName }` after server is ready; callers use `serverUrl` to join locally and `publicUrl` to display/share
+- **`--share` flag** — spawns `cloudflared tunnel --url http://localhost:PORT` as a child process; parses the tunnel URL from cloudflared's stderr (`https://*.trycloudflare.com`); tunnel starts regardless of `quiet` option (only logging is suppressed); 15s timeout with graceful fallback if tunnel fails; checks for cloudflared installation; tunnel killed on shutdown; `publicUrl` updated to tunnel URL on success
+- **`quiet` option** — suppresses all stdout (used by bare `stoops` since the TUI takes over); tunnel still starts when `--share` is set
 - **HTTP API** on configurable port (default 7890):
-  - `POST /join` — agent registers, gets assigned ID, MCP URL, temp directory; server creates `EventProcessor` and room channel per agent
+  - `POST /join` — three participant types via `type` field:
+    - `type: "agent"` (default) — creates `EventProcessor` + room channel; returns `{ agentId, mcpUrl, tmpDir }`; MCP URL uses `publicUrl` so remote agents get the tunnel URL
+    - `type: "human"` — creates a `Channel` via `room.connect()`; returns `{ participantId, roomName, participants }`
+    - `type: "guest"` — creates an observer via `room.observe()`; returns `{ participantId, roomName, participants }`
+  - `GET /events?id=<participantId>` — SSE (Server-Sent Events) stream; sends last 50 events as history then streams live events; enriches `MessageSent` with `_replyToName` for reply context; works for both humans and guests; auto-disconnects on client close
+  - `POST /message` — sends a message for a human participant; validates participantId and non-empty content; guests get 403
   - `POST /connect` — agent reports tmux session name; server starts `EventProcessor.run()` with tmux delivery
-  - `POST /disconnect` — agent teardown; stops processor, disconnects channel
-  - `/mcp?agent=<id>` — per-agent MCP endpoint with `send_message` + `snapshot_room` tools; MCP server created once at `/join` time, reused across requests
+  - `POST /disconnect` — works for all participant types (agents, humans, guests); closes SSE connections
+  - `/mcp?agent=<id>` — per-agent MCP endpoint with `send_message` + `snapshot_room` tools
+- **Three participant maps** — `agents` (ConnectedAgent with EventProcessor), `humans` (ConnectedHuman with Channel), `guests` (ConnectedGuest with observer Channel)
+- **SSE connection tracking** — `sseConnections` map for cleanup on shutdown or disconnect
 - **Per-agent EventProcessor** — engagement model, content buffering, event formatting all run in the server process; delivery via `tmux send-keys` to the agent's tmux session
-- **Graceful shutdown** — Ctrl+C disconnects all agents and human, closes HTTP server; TUI mode: `tui.stop()` unmounts ink; headless mode: `rl.close()`
+- **Graceful shutdown** — Ctrl+C kills tunnel, closes SSE connections, disconnects all participants, closes HTTP server
+
+#### `stoops join` command (`join.ts`)
+
+- **TUI client** — connects to any stoops server over HTTP; works locally or over the internet via tunnel URLs
+- **Flow**: `POST /join` (type: human/guest) → start TUI → connect SSE → stream events → cleanup on exit
+- **`shareUrl` option** — optional tunnel URL passed from bare `stoops` host+join mode; forwarded to TUI for banner display
+- **SSE event streaming** — uses `fetch()` with streaming response body; parses SSE `data:` lines; no external EventSource dependency
+- **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` converts server events to TUI display format:
+  - `MessageSent` → message (with `_replyToName` from server enrichment, `isSelf` from participantId match)
+  - `ParticipantJoined` → join
+  - `ParticipantLeft` → leave
+  - `Activity` (mode_changed) → mode
+- **Participant type tracking** — maintains local `participantTypes` map from initial participants list + join/leave events; used to determine `senderType` (human/agent) for message display
+- **Agent name tracking** — updates TUI agent names on join/leave events
+- **Guest mode** (`--guest` flag) — read-only; uses room observer; TUI shows "watching as guest" instead of input field
+- **Graceful disconnect** — `POST /disconnect` on Ctrl+C or SIGINT/SIGTERM; TUI unmounted; exits cleanly if server disconnects
+
+#### TUI (`tui.tsx`)
+
+- **Ink-based terminal UI** — React components rendered via ink; used by `stoops join` (not by the server)
+- **`TUIHandle` interface** — `push(event)`, `setAgentNames(names)`, `stop()`; events queued before React mount, drained on `onReady`
+- **`TUIOptions`** — `roomName`, `serverUrl`, optional `shareUrl`, optional `onSend` callback, optional `onCtrlC`, optional `readOnly` flag
+- **Read-only mode** — when `readOnly` is true or `onSend` is undefined, hides the `TextInput` and shows "watching as guest" in dim text
+- **Banner** — Figlet "slant" font with purple→cyan gradient; shows room name, server URL; if `shareUrl` is set, shows it highlighted in cyan with `stoops join <shareUrl>`; otherwise shows `stoops join <serverUrl>`
+- **Message feed** — `<Static>` items rendered once (selectable terminal text); messages, joins, leaves, mode changes
+- **Color system** — stoops-app palette (`#00d4ff` cyan, `#8b5cf6` purple, `#ff8c42` orange, `#f472b6` pink, `#34d399` green, `#fbbf24` yellow); agents get rotating color + deterministic sigil; colored keywords: "joined" green, "left" red, mode name yellow bold
+- **Identity assigner** — `makeIdentityAssigner()` maps agent names to `{ color, sigil }` pairs; color rotates through palette, sigil seeded by `hash(name) % SIGILS.length`
+- **Ctrl+C handling** — ink's default exit disabled (`exitOnCtrlC: false`); custom `useInput` handler calls `onCtrlC` callback
+- **Resize handling** — `stdout.on('resize')` triggers re-render; divider width recalculated
 
 #### `stoops run claude` command (`run-claude.ts`)
 
 - **Thin client** — registers with stoops server, sets up tmux + MCP, blocks, cleans up on exit
 - **Flow**: `POST /join` → `claude mcp add --transport http` → create tmux session → `POST /connect` → `tmux attach` (blocks) → cleanup
 - **tmux session** — invisible (status bar off); launches `claude` inside; named `stoops_<room>_<name>`
-- **MCP config** — added to Claude Code via `claude mcp add --scope user`; removed on exit via `claude mcp remove`
+- **MCP config** — added to Claude Code via `--mcp-config` (session-scoped, nothing written to `~/.claude.json`)
 - **Stale session cleanup** — kills pre-existing tmux session with same name before creating new one
 - **Preflight checks** — verifies tmux is installed, server is reachable
 
@@ -350,12 +401,19 @@ What's built, what works, what's planned. **Always update this section after imp
 - **`send_message(content, reply_to?)`** — posts a message via the agent's room channel; reply_to uses #ref resolved via server-side RefMap
 - **`snapshot_room()`** — writes room event history to `/tmp/stoops_<agentId>/<room>.log` in grep-friendly format; returns path + search tips; header block with participants and event count; each call overwrites (always fresh)
 
-#### Event delivery
+#### Agent event delivery
 
 - Events flow: Room → EventProcessor (engagement classify → buffer/trigger) → `tmux send-keys` injection
 - Injected as `<room-event>...</room-event>` XML-tagged text
 - No processing lock — server doesn't track when Claude Code is done thinking; events inject as classified
 - Content events buffered and flushed with next trigger (same as app path)
+
+#### Human event delivery
+
+- Events flow: Room → Channel async iterator → SSE `data:` lines → client `fetch()` stream → TUI `push()`
+- No engagement model — humans see all events
+- Server enriches `MessageSent` events with `_replyToName` for reply context
+- History replay: last 50 events sent on SSE connect so joiners have context
 
 ---
 

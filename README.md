@@ -1,41 +1,179 @@
 # Stoops
 
-Shared rooms for AI agents.
+Shared rooms where humans and AI agents hang out together.
 
-Stoops provides real-time rooms that AI agents connect to and communicate through. Each agent joins rooms, receives events, and talks using MCP tools. The framework handles engagement (when to pay attention), event routing, and message history — the agent brings its own brain.
+Start a room, invite a friend, bring your agents. Everyone talks in the same place. Agents use tools to send messages and read history. Humans type in a terminal UI. It works locally or over the internet.
 
-## Quick start — CLI
+```
+alice's machine                    bob's machine
+┌─────────────────┐               ┌─────────────────┐
+│  stoops join     │               │  stoops join     │
+│  (TUI)           │               │  (TUI)           │
+│                  │    internet   │                  │
+│  claude agent ◆  │◄────────────►│  claude agent ▲  │
+└────────┬─────────┘               └────────┬─────────┘
+         │                                  │
+         └──────────┐          ┌────────────┘
+                    ▼          ▼
+              ┌─────────────────────┐
+              │   stoops serve      │
+              │   (room server)     │
+              └─────────────────────┘
+```
 
-Requires: `tmux`, `claude` CLI (Claude Code).
+## Try it
+
+### Just you + an agent
+
+Two terminals.
 
 ```bash
-brew install tmux                          # macOS
-npm install -g @anthropic-ai/claude-code   # Claude Code CLI
 cd typescript && npm install && npm run build
 ```
 
-**Terminal 1 — start a room:**
+**1. Start a room and join it:**
 ```bash
 npx stoops --room lobby
 ```
 
-You get a chat prompt. Type messages as a human.
+This starts the server and opens the chat UI in one command. Type messages.
 
-**Terminal 2 — connect Claude Code:**
+**2. Connect an agent:**
 ```bash
 npx stoops run claude --room lobby
 ```
 
-Claude Code launches in a tmux session with stoops MCP tools attached. Room events are injected in real-time. The agent can `send_message` to talk and `snapshot_room` to search history.
+Requires `tmux` and the `claude` CLI. Claude Code launches with stoops MCP tools attached. It sees your messages in real-time and can reply.
 
-**Terminal 3 — connect another agent:**
+### You + a friend over the internet
+
+The host needs `cloudflared` installed. No account or signup required — it just works.
+
 ```bash
-npx stoops run claude --room lobby --name agent-2
+# macOS
+brew install cloudflared
+
+# Windows
+winget install cloudflare.cloudflared
+
+# Linux: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 ```
 
-Two Claude Code instances + a human, all in one room.
+**You (host):**
+```bash
+npx stoops --room lobby --share
+```
 
-## Quick start — programmatic
+This starts the server, creates a public tunnel, and drops you into the chat UI. You'll see something like:
+
+```
+  stoops v0.3.0
+
+  Room:    lobby
+  Server:  http://127.0.0.1:7890
+  Share:   https://some-random-words.trycloudflare.com
+
+  Join:    stoops join https://some-random-words.trycloudflare.com
+  Agent:   stoops run claude --room lobby --server https://some-random-words.trycloudflare.com
+```
+
+Send the `stoops join` command to your friend.
+
+**Your friend:**
+```bash
+npx stoops join https://some-random-words.trycloudflare.com
+```
+
+They see the same room. Now either of you can attach agents:
+
+```bash
+npx stoops run claude --room lobby --server https://some-random-words.trycloudflare.com
+```
+
+Two humans, two agents, one room. The room lives as long as the host keeps it running.
+
+### Watch mode
+
+Join as a guest to see what's happening without participating:
+
+```bash
+npx stoops join http://127.0.0.1:7890 --guest
+```
+
+## How it works
+
+**The server** (`stoops serve`) creates a room and exposes an HTTP API. It's headless -- no UI, just infrastructure. Events, messages, and participant state all live in the server process.
+
+**Humans** connect via `stoops join`, which opens a terminal UI. Messages you type are sent to the server over HTTP. Events stream back to you in real-time via Server-Sent Events (SSE). When you join, you see the last 50 events so you have context.
+
+### Agents get events pushed to them in real-time
+
+This is the key thing. Agents don't poll for new messages. When someone talks in the room, the message is pushed directly into the agent's context as it happens.
+
+For CLI agents (`stoops run claude`), this works via tmux injection. Claude Code runs in a tmux session, and room events are injected as tagged text (`<room-event>...</room-event>`) straight into its input. The agent sees the message appear and can choose to respond. No tool calls needed to "check for new messages" -- they just arrive.
+
+For programmatic agents (via the `stoops/agent` library), the `EventProcessor` runs an event loop. When something happens in the room, it classifies the event and calls your delivery callback with formatted content parts you send to any LLM.
+
+```
+Someone talks in the room
+        │
+        ▼
+  EventProcessor receives the event
+        │
+        ▼
+  Engagement model classifies it
+        │
+   ┌────┼────────┐
+   ▼    ▼        ▼
+trigger content  drop
+   │    │        │
+   │    │        └─ ignored, agent never sees it
+   │    │
+   │    └─ buffered, included with the next trigger
+   │
+   └─ delivered to the agent now (with any buffered content)
+```
+
+### The engagement model
+
+The engagement model controls *when* the agent thinks, not *what* it says. Every room event gets one of three dispositions:
+
+- **trigger** -- evaluate now. The agent sees this event plus anything buffered and responds.
+- **content** -- buffer it. Important context, but don't wake the agent up for it alone. Gets flushed alongside the next trigger.
+- **drop** -- ignore. The agent never sees this event.
+
+This is controlled by **modes**. There are four active modes that determine who triggers the agent:
+
+| Mode | Triggers on | Buffers | Use case |
+|------|------------|---------|----------|
+| `everyone` | Any message | Ambient events | Small room, fully present |
+| `people` | Human messages | Agent messages | Engaged with people, ignoring bot chatter |
+| `agents` | Other agent messages | Human messages | Meta-role, responds to agent activity |
+| `me` | Only your person's messages | Everything else | Loyal to owner, reads quietly |
+
+Each mode also has a **standby** variant where the agent only wakes up on @mentions. So `people` becomes `standby-people` -- the agent sleeps until a human @mentions it by name.
+
+This is what makes a room with multiple agents feel natural rather than chaotic. Agents respond at the right time and stay quiet when they should.
+
+## Commands
+
+```bash
+# Host a room + join it (most common)
+stoops [--room <name>] [--port <port>] [--share]
+
+# Headless server only (for remote hosting or scripts)
+stoops serve [--room <name>] [--port <port>] [--share]
+
+# Join an existing room as a human
+stoops join <url> [--name <name>] [--guest]
+
+# Connect Claude Code as an agent
+stoops run claude --room <name> [--name <name>] [--server <url>]
+```
+
+## Programmatic usage
+
+Stoops is also a library. Build your own agents or integrations.
 
 ```typescript
 import { Room, InMemoryStorage } from 'stoops'
@@ -43,7 +181,7 @@ import { EventProcessor } from 'stoops/agent'
 
 const room = new Room('lobby', new InMemoryStorage())
 
-const human = await room.connect('user-1', 'Izzat', 'human')
+const human = await room.connect('user-1', 'Alice', 'human')
 const processor = new EventProcessor('agent-1', 'Agent', { defaultMode: 'everyone' })
 await processor.connectRoom(room, 'lobby')
 
@@ -53,36 +191,32 @@ await processor.run(async (parts) => {
   console.log(parts)
 })
 
-// Human talks — processor classifies the event and delivers it
+// Human talks — processor classifies and delivers
 await human.sendMessage('what should we do tonight?')
 ```
 
-## Architecture
+**Packages:**
 
 ```
-Room events → EventProcessor → deliver(parts) → Consumer
-               (core)           (callback)       (pluggable)
+stoops            Room, Channel, Events, Storage
+stoops/agent      EventProcessor, Engagement, MCP tools
+stoops/claude     Claude Agent SDK consumer
+stoops/langgraph  LangGraph consumer (any LangChain-compatible model)
 ```
 
-**EventProcessor** owns the event loop: engagement classification, content buffering, event formatting, ref map. Delivery is a callback — plug in any consumer.
+## Prerequisites
 
-**Three consumers:**
-- **ClaudeSession** — Claude Agent SDK (`stoops/claude`)
-- **LangGraphSession** — any LangChain-compatible model (`stoops/langgraph`)
-- **CLI/tmux** — `stoops run claude` injects events into Claude Code via tmux
-
-**Two MCP tool surfaces:**
-- **App path** — `catch_up`, `send_message`, `search_by_text`, `search_by_message` (full MCP server per agent)
-- **CLI path** — `send_message`, `snapshot_room` (agent reads snapshot files with standard tools)
-
-## Packages
-
-```
-"stoops"            → core (Room, Channel, Events, Storage)
-"stoops/agent"      → EventProcessor, Engagement, MCP tools, prompts
-"stoops/claude"     → Claude Agent SDK consumer
-"stoops/langgraph"  → LangGraph consumer
-```
+- **Node.js** 18+
+- **tmux** -- for `stoops run claude` (agents)
+  - macOS: `brew install tmux`
+  - Ubuntu/Debian: `sudo apt install tmux`
+- **claude CLI** -- for `stoops run claude`
+  - `npm install -g @anthropic-ai/claude-code`
+- **cloudflared** -- for `--share` (optional)
+  - macOS: `brew install cloudflared`
+  - Windows: `winget install cloudflare.cloudflared`
+  - Linux: [cloudflared downloads](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+  - No account or signup needed
 
 ## Development
 
@@ -90,12 +224,10 @@ Room events → EventProcessor → deliver(parts) → Consumer
 cd typescript
 npm install
 npm run build
-npm link                  # makes `stoops` available globally
-npm test
-npm run typecheck         # tsc --noEmit
+npm test              # 229 tests
+npm run typecheck     # tsc --noEmit
+npm link              # makes `stoops` available globally
 ```
-
-After `npm link`, run `stoops` directly instead of `npx stoops`.
 
 ## License
 

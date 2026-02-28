@@ -8,6 +8,9 @@
   "bin": {
     "stoops": "./dist/cli/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",

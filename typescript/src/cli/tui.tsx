@@ -60,8 +60,10 @@ export interface TUIHandle {
 export interface TUIOptions {
   roomName: string;
   serverUrl: string;
-  onSend(content: string): void;
+  shareUrl?: string;
+  onSend?(content: string): void;
   onCtrlC?(): void;
+  readOnly?: boolean;
 }
 
 // ── Identity (seed → color + sigil) ──────────────────────────────────────────
@@ -185,15 +187,19 @@ type StaticEntry = { id: string; event?: DisplayEvent };
 function App({
   roomName,
   serverUrl,
+  shareUrl,
   onSend,
   onCtrlC,
   onReady,
+  readOnly,
 }: {
   roomName: string;
   serverUrl: string;
-  onSend: (content: string) => void;
+  shareUrl?: string;
+  onSend?: (content: string) => void;
   onCtrlC?: () => void;
   onReady: (handle: AppHandle) => void;
+  readOnly?: boolean;
 }) {
   const [events,     setEvents]     = useState<DisplayEvent[]>([]);
   const [agentNames, setAgentNames] = useState<string[]>([]);
@@ -243,16 +249,27 @@ function App({
                 ))}
                 <Text>{" "}</Text>
                 <Text>
-                  <Text color={C.dim}>{"  room     "}</Text>
+                  <Text color={C.dim}>{"  room      "}</Text>
                   <Text color={C.cyan}>{roomName}</Text>
                 </Text>
+                {shareUrl && (
+                  <Text>
+                    <Text color={C.dim}>{"  url       "}</Text>
+                    <Text color={C.cyan}>{shareUrl}</Text>
+                  </Text>
+                )}
+                <Text>{" "}</Text>
                 <Text>
-                  <Text color={C.dim}>{"  server   "}</Text>
-                  <Text color={C.muted}>{serverUrl}</Text>
+                  <Text color={C.dim}>{"  human     "}</Text>
+                  <Text color={C.secondary}>{`stoops join ${shareUrl ?? serverUrl}`}</Text>
                 </Text>
                 <Text>
-                  <Text color={C.dim}>{"  connect  "}</Text>
-                  <Text color={C.secondary}>{`stoops run claude --room ${roomName}`}</Text>
+                  <Text color={C.dim}>{"  claude    "}</Text>
+                  <Text color={C.secondary}>
+                    {shareUrl
+                      ? `stoops run claude --room ${roomName} --server ${shareUrl}`
+                      : `stoops run claude --room ${roomName}`}
+                  </Text>
                 </Text>
               </Box>
             );
@@ -280,18 +297,24 @@ function App({
           })}
         </Box>
       )}
-      <Box paddingX={1}>
-        <Text color={C.cyan} bold>{"› "}</Text>
-        <TextInput
-          value={input}
-          onChange={setInput}
-          onSubmit={(value) => {
-            const content = value.trim();
-            if (content) onSend(content);
-            setInput("");
-          }}
-        />
-      </Box>
+      {readOnly || !onSend ? (
+        <Box paddingX={1}>
+          <Text color={C.muted}>{"  watching as guest"}</Text>
+        </Box>
+      ) : (
+        <Box paddingX={1}>
+          <Text color={C.cyan} bold>{"› "}</Text>
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={(value) => {
+              const content = value.trim();
+              if (content) onSend(content);
+              setInput("");
+            }}
+          />
+        </Box>
+      )}
     </>
   );
 }
@@ -311,9 +334,11 @@ export function startTUI(opts: TUIOptions): TUIHandle {
     <App
       roomName={opts.roomName}
       serverUrl={opts.serverUrl}
+      shareUrl={opts.shareUrl}
       onSend={opts.onSend}
       onCtrlC={opts.onCtrlC}
       onReady={onReady}
+      readOnly={opts.readOnly}
     />,
     { exitOnCtrlC: false },
   );
