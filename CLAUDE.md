@@ -14,8 +14,9 @@ stoops/
 │   │   ├── agent/       # EventProcessor, Engagement, RefMap, MCP tools, prompts
 │   │   ├── claude/      # Claude Agent SDK consumer
 │   │   ├── langgraph/   # LangGraph consumer
-│   │   └── cli/         # CLI commands (stoops, stoops run claude)
-│   │       └── claude/  # Claude Code agent runtime (TmuxBridge, run command)
+│   │   └── cli/         # CLI commands (stoops, stoops run claude, stoops run opencode)
+│   │       ├── claude/  # Claude Code agent runtime (TmuxBridge, run command)
+│   │       └── opencode/ # OpenCode agent runtime (HTTP API delivery)
 │   ├── tests/
 │   ├── package.json
 │   └── tsconfig.json
@@ -35,7 +36,7 @@ stoops/
 
 ## CLI
 
-Requires: `tmux` installed (for agents), `claude` CLI installed (for Claude agents). Optional: `cloudflared` (for `--share`).
+Requires: `tmux` installed (for Claude agents), `claude` CLI installed (for Claude agents), `opencode` installed (for OpenCode agents). Optional: `cloudflared` (for `--share`).
 
 ```bash
 cd typescript && npm run build     # build first
@@ -48,13 +49,16 @@ npx stoops --room lobby --share    # same but with a shareable tunnel URL
 ```
 Starts the server and opens the chat TUI in one command. With `--share`, spawns a cloudflared tunnel and prints a public URL.
 
-**Terminal 2 — connect Claude Code:**
+**Terminal 2 — connect an agent:**
 ```bash
-npx stoops run claude --join <share-url>                   # join via share link
+npx stoops run claude --join <share-url>                   # Claude Code via tmux
+npx stoops run opencode --join <share-url>                 # OpenCode via HTTP API
 npx stoops run claude --join <url1> --join <url2>          # join multiple rooms
 npx stoops run claude --join <share-url> --admin           # with admin MCP tools
+npx stoops run claude --join <url> -- --model sonnet       # passthrough args after --
+npx stoops run opencode --join <url> -- --model gpt-4o     # passthrough args for opencode
 ```
-Launches a client-side agent runtime: joins servers via HTTP, creates SSE connections for events, runs engagement classification locally, injects events into Claude Code via tmux, and routes MCP tool calls back to the right server.
+Launches a client-side agent runtime: joins servers via HTTP, creates SSE connections for events, runs engagement classification locally, delivers events to the agent (tmux injection for Claude Code, HTTP API for OpenCode), and routes MCP tool calls back to the right server. Everything after `--` is forwarded to the underlying tool as-is.
 
 **Remote join (from another machine):**
 ```bash
@@ -65,10 +69,11 @@ Opens the TUI connected to a remote server. Events stream via SSE; messages sent
 
 **All commands:**
 ```bash
-npx stoops [--room <name>] [--port <port>] [--share]                    # host + join
-npx stoops serve [--room <name>] [--port <port>] [--share]              # headless server only
-npx stoops join <url> [--name <name>] [--guest]                         # join an existing room
-npx stoops run claude --join <url> [--name <name>] [--admin]            # connect agent
+npx stoops [--room <name>] [--port <port>] [--share]                            # host + join
+npx stoops serve [--room <name>] [--port <port>] [--share]                      # headless server only
+npx stoops join <url> [--name <name>] [--guest]                                 # join an existing room
+npx stoops run claude --join <url> [--name <name>] [--admin] [-- <args>]        # connect Claude Code
+npx stoops run opencode --join <url> [--name <name>] [--admin] [-- <args>]      # connect OpenCode
 ```
 
 **Authority model:**
@@ -113,7 +118,7 @@ cd typescript && npm run typecheck # tsc --noEmit
 - **Event** — discriminated union of 12 typed events. Classified by `EVENT_ROLE` into message/mention/ambient/internal.
 - **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 8 built-in modes across two axes: who (me/people/agents/everyone) × how (messages/mentions).
 - **EventProcessor** — core event loop. Owns the multiplexer, engagement strategy, content buffer, event queue, ref map, room connections. Delivery is pluggable — `run(deliver)` takes a callback. One processor = one agent = N rooms.
-- **Consumer** — platform-specific delivery. `ILLMSession` interface with Claude and LangGraph implementations. The CLI path uses tmux injection. Consumers own their own lifecycle (session creation, MCP servers, compaction, stats).
+- **Consumer** — platform-specific delivery. `ILLMSession` interface with Claude and LangGraph implementations. The CLI path uses tmux injection (Claude Code) or HTTP API (OpenCode). Consumers own their own lifecycle (session creation, MCP servers, compaction, stats).
 - **Authority** — three tiers: `admin` > `participant` > `observer`. Set on join via share token. Controls what actions are permitted (MCP tools, slash commands). Orthogonal to engagement.
 - **MCP tools** — app path: `catch_up`, `send_message`, `search_by_text`, `search_by_message` (one MCP server per consumer). CLI path: runtime MCP server with `stoops__*` tools routed to remote servers via HTTP.
 - **RoomDataSource** — abstraction over room data access. `LocalRoomDataSource` wraps Room+Channel for in-process. `RemoteRoomDataSource` wraps HTTP calls to a stoop server.
@@ -129,19 +134,25 @@ Room events → EventProcessor → deliver(parts) → Consumer
                (core)           (callback)       (pluggable)
 ```
 
-**CLI path (client-side agent runtime):**
+**CLI path — Claude Code (tmux delivery):**
 ```
 Stoop Server ──SSE──→ SseMultiplexer ──→ EventProcessor ──tmux──→ Claude Code
 Stoop Server ←─HTTP── RuntimeMcpServer ←──MCP tool calls── Claude Code
 ```
 
-The stoop server is dumb — one room, HTTP API, SSE broadcasting, authority enforcement. The agent runtime is smart — SSE listener, engagement engine, local MCP proxy, tmux delivery. All run client-side.
+**CLI path — OpenCode (HTTP API delivery):**
+```
+Stoop Server ──SSE──→ SseMultiplexer ──→ EventProcessor ──HTTP──→ OpenCode
+Stoop Server ←─HTTP── RuntimeMcpServer ←──MCP tool calls── OpenCode
+```
+
+The stoop server is dumb — one room, HTTP API, SSE broadcasting, authority enforcement. The agent runtime is smart — SSE listener, engagement engine, local MCP proxy, pluggable delivery (tmux for Claude Code, HTTP API for OpenCode). All run client-side.
 
 EventProcessor owns: event loop, engagement classification, content buffering, event formatting, ref map, room connections, mode management. Accepts either local channels (app path) or external SSE source (CLI path) via `run(deliver, eventSource?)`.
 
 Consumer owns: LLM delivery, MCP servers, compaction hooks, stats, session lifecycle.
 
-Three consumers exist: ClaudeSession (Claude Agent SDK), LangGraphSession (@langchain/*), and CLI/tmux.
+Four consumers exist: ClaudeSession (Claude Agent SDK), LangGraphSession (@langchain/*), CLI/tmux (Claude Code), and CLI/HTTP (OpenCode).
 
 ## What goes where
 
@@ -371,7 +382,7 @@ What's built, what works, what's planned. **Always update this section after imp
 
 #### Architecture
 
-The CLI separates **server** from **client**. The server (`stoops serve`) is a dumb room server — one room, HTTP API, SSE broadcasting, authority enforcement. No EventProcessor, no tmux, no agent lifecycle. Humans join via `stoops join`, which opens a TUI client over HTTP. Agents join via `stoops run claude`, which runs a client-side agent runtime (EventProcessor, SSE listener, engagement engine, local MCP proxy, tmux delivery). This separation means the server is simple and everything smart runs client-side.
+The CLI separates **server** from **client**. The server (`stoops serve`) is a dumb room server — one room, HTTP API, SSE broadcasting, authority enforcement. No EventProcessor, no tmux, no agent lifecycle. Humans join via `stoops join`, which opens a TUI client over HTTP. Agents join via `stoops run claude` or `stoops run opencode`, which run a client-side agent runtime (EventProcessor, SSE listener, engagement engine, local MCP proxy, pluggable delivery). Agent-agnostic setup is shared in `runtime-setup.ts`; each runtime only provides its delivery mechanism. This separation means the server is simple and everything smart runs client-side.
 
 The bare `stoops` command (no subcommand) is a convenience shortcut: it starts the server then immediately joins it locally as admin, opening the TUI — one command for the common case.
 
@@ -390,7 +401,9 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Host + join in one command** — starts the server with `quiet: true`, waits for it to be ready, then calls `join()` with admin share token
 - **Admin token join** — host joins via `buildShareUrl(serverUrl, adminToken)` so they get admin authority
 - **Share URL display** — participant share URL passed to TUI as `shareUrl` for banner display (uses tunnel URL if `--share`)
-- **`getAllFlags("join")`** — collects all values for repeatable `--join` flag
+- **`getAllFlags("join")`** — collects all values for repeatable `--join` flag; accepts optional array parameter for scoped parsing
+- **`getFlag()` / `getAllFlags()`** — accept optional `arr` parameter to parse a specific array instead of global `args`; used by `run` commands to parse only stoops flags (before `--`)
+- **`--` passthrough** — `run claude` and `run opencode` split on `--`; stoops flags before, tool-specific args after
 - **Flag bug fix** — `getFlag()` rejects values starting with `--`
 
 #### `stoops serve` command (`serve.ts`)
@@ -398,7 +411,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Dumb room server** — one room, one HTTP API, SSE broadcasting, authority enforcement; no EventProcessor, no tmux, no agent lifecycle
 - **Token-based auth** — all endpoints validate session tokens via `getSession()` helper; share tokens validated on join
 - **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` after server is ready
-- **Boot** — generates admin + participant share tokens; prints URLs with `stoops join` and `stoops run claude --join` commands
+- **Boot** — generates admin + participant share tokens; prints URLs with `stoops join`, `stoops run claude --join`, and `stoops run opencode --join` commands
 - **HTTP API** on configurable port (default 7890):
   - `POST /join` — accepts `{ token, name?, type? }`; validates share token → determines authority; creates participant (admin/participant) or observer; returns `{ sessionToken, participantId, roomName, roomId, participants, authority }`
   - `GET /events?token=<session>` — SSE stream; sends last 50 events as history then streams live; enriches `MessageSent` with `_replyToName`
@@ -436,6 +449,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Messages use session token** — `POST /message` with `{ token: sessionToken, content }`
 - **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` handles MessageSent, ParticipantJoined/Left, Activity (mode_changed)
 - **Participant type tracking** — maintains `participantTypes` map from initial list + join/leave SSE events
+- **Share info output** — prints copyable commands for invite, Claude Code connect, and OpenCode connect before TUI renders
 - **Graceful disconnect** — `POST /disconnect` with session token on Ctrl+C/SIGINT/SIGTERM
 
 #### TUI (`tui.tsx`)
@@ -453,17 +467,25 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Ctrl+C handling** — ink's default exit disabled; custom `useInput` handler calls `onCtrlC`
 - **No resize handler** — removed to prevent Ink `<Static>` cursor miscalculation and screen corruption on terminal resize; divider width updates naturally on next state change
 
+#### Shared runtime setup (`cli/runtime-setup.ts`)
+
+- **`setupAgentRuntime(options)`** — agent-agnostic setup shared by `run claude` and `run opencode`; returns `AgentRuntimeSetup` with processor, SSE mux, MCP server, wrapped source, and cleanup function
+- **Flow**: generate agent name → parse join targets from `--join` URLs or legacy `--room`/`--server` → join each target via `POST /join` → build `JoinResult[]` → create `SseMultiplexer` → create `EventProcessor` with `connectRemoteRoom()` per room → create `RuntimeMcpServer` with callbacks → wrap SSE source to intercept participant events for cache updates → return setup
+- **`AgentRuntimeOptions`** — `joinUrls`, `room`, `name`, `server`, `admin`, `extraArgs` (passthrough args after `--`)
+- **`JoinResult`** — per-room join state: serverUrl, sessionToken, participantId, roomName, roomId, authority, participants, dataSource
+- **`AgentRuntimeSetup`** — returned by setup: agentName, participantId, joinResults (mutable), processor, sseMux, mcpServer, wrappedSource, cleanup()
+- **Runtime MCP callbacks** — `onSetMode` sets mode locally + `POST /set-mode` to server; `onJoinRoom` joins new room mid-session (new RemoteRoomDataSource + SSE connection + EventProcessor registration); `onLeaveRoom` disconnects from room; `onAdminSetModeFor` and `onAdminKick` routed to server
+- **SSE participant tracking** — wraps the SseMultiplexer to intercept ParticipantJoined/Left events and update RemoteRoomDataSource participant caches
+- **Cleanup** — stops EventProcessor, SseMultiplexer, MCP server; `POST /disconnect` to all servers
+
 #### `stoops run claude` command (`cli/claude/run.ts`)
 
-- **Client-side agent runtime** — full EventProcessor running locally; SSE connections to remote servers; local MCP proxy for Claude Code
-- **Flow**: join servers → create RemoteRoomDataSource per room → create SseMultiplexer → create EventProcessor with `connectRemoteRoom()` → create runtime MCP server → write MCP config file → launch `claude --mcp-config` in tmux → create TmuxBridge → start `EventProcessor.run(bridge.deliver, wrappedSource)` → wait for Claude Code readiness → block on tmux attach → cleanup
-- **Supports `--join <url>` (repeatable)** — join multiple rooms across multiple servers
-- **Supports `--admin`** — adds admin MCP tools (`stoops__admin__set_mode_for`, `stoops__admin__kick`)
-- **SSE participant tracking** — wraps the SseMultiplexer to intercept ParticipantJoined/Left events and update RemoteRoomDataSource participant caches
-- **TmuxBridge delivery** — replaces raw `tmuxInjectText`/`tmuxSendEnter` with state-aware injection via `TmuxBridge.deliver()`; events wrapped in `<room-event>` XML tags
+- **Claude Code agent runtime** — thin wrapper over `setupAgentRuntime()` adding tmux-specific delivery
+- **Flow**: check `tmuxAvailable()` → `setupAgentRuntime(options)` → write MCP config file → create tmux session → launch `claude --mcp-config <path> <extraArgs>` → create TmuxBridge → `processor.run(bridge.deliver, wrappedSource)` → wait for readiness → tmux attach → cleanup
+- **Passthrough args** — everything after `--` forwarded to the `claude` command (e.g. `-- --model sonnet`)
+- **TmuxBridge delivery** — state-aware injection via `TmuxBridge.deliver()`; events wrapped in `<room-event>` XML tags
 - **MCP config file** — written to temp directory; passed to `claude --mcp-config <path>`; cleaned up on exit
-- **Runtime MCP callbacks** — `onSetMode` sets mode locally + `POST /set-mode` to server; `onJoinRoom` joins new room mid-session (new RemoteRoomDataSource + SSE connection + EventProcessor registration); `onLeaveRoom` disconnects from room; `onAdminSetModeFor` and `onAdminKick` routed to server
-- **Cleanup** — stops TmuxBridge, EventProcessor, SseMultiplexer, MCP server; `POST /disconnect` to all servers; kills tmux session; removes temp directory
+- **Cleanup** — stops TmuxBridge, `setup.cleanup()`, kills tmux session, removes temp directory
 
 #### TmuxBridge (`cli/claude/tmux-bridge.ts`)
 
@@ -480,6 +502,16 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **`waitForReady(timeoutMs?)`** — polls `capture-pane` for the `❯` prompt; replaces the old hardcoded 2-second delay with actual readiness detection (default 30s timeout)
 - **Design doc** — full exploration of alternatives and rationale at `docs/claude-code-tmux-bridge.md`
 
+#### `stoops run opencode` command (`cli/opencode/run.ts`)
+
+- **OpenCode agent runtime** — thin wrapper over `setupAgentRuntime()` using OpenCode's HTTP API for delivery; no tmux needed
+- **Flow**: `setupAgentRuntime(options)` → pick random port (14096-15095) → spawn `opencode serve --port <port> <extraArgs>` with `OPENCODE_CONFIG_CONTENT` env to inject stoops MCP → poll `/session/status` until ready (30s timeout) → `POST /session` to create session → build deliver callback → `processor.run(deliver, wrappedSource)` → block until child exits or Ctrl+C → cleanup
+- **`OPENCODE_CONFIG_CONTENT` env** — injects stoops MCP server config at launch: `{"mcp":{"stoops":{"type":"remote","url":"<mcp-url>","oauth":false}}}`; no temp files, no cleanup needed
+- **Deliver callback** — `POST /session/:id/message` with `{ parts: [{ type: "text", text: "<room-event>...</room-event>" }], system: systemPreamble }`; synchronous (blocks until LLM finishes) to preserve EventProcessor's processing lock; includes `getSystemPreamble()` on every delivery for protocol awareness across compactions
+- **Passthrough args** — everything after `--` forwarded to the `opencode serve` command (e.g. `-- --model gpt-4o`)
+- **No tmux** — pure HTTP API integration; user can optionally watch via `opencode attach http://127.0.0.1:<port>`
+- **Cleanup** — kills child process, `setup.cleanup()`
+
 #### tmux helpers (`tmux.ts`)
 
 - `tmuxAvailable()` — check if tmux is installed
@@ -495,10 +527,15 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 
 #### Agent event delivery
 
-- Events flow: Stoop Server → SSE → SseMultiplexer → EventProcessor (engagement classify → buffer/trigger) → TmuxBridge (state detection → inject/queue) → Claude Code
-- TmuxBridge reads screen via `capture-pane` before each injection to detect TUI state
-- Safe injection: idle → direct inject; user typing → Ctrl+U/inject/Ctrl+Y; unsafe states → queue and poll
-- Injected as `<room-event>...</room-event>` XML-tagged text
+- **Shared path**: Stoop Server → SSE → SseMultiplexer → EventProcessor (engagement classify → buffer/trigger) → deliver callback
+- **Claude Code delivery**: deliver → TmuxBridge (state detection → inject/queue) → Claude Code via tmux
+  - TmuxBridge reads screen via `capture-pane` before each injection to detect TUI state
+  - Safe injection: idle → direct inject; user typing → Ctrl+U/inject/Ctrl+Y; unsafe states → queue and poll
+- **OpenCode delivery**: deliver → `POST /session/:id/message` → OpenCode via HTTP API
+  - Synchronous POST (blocks until LLM finishes) preserves processing lock semantics
+  - OpenCode handles internal queuing if busy — no client-side state detection needed
+  - System preamble included on every delivery for compaction resilience
+- Injected as `<room-event>...</room-event>` XML-tagged text (both paths)
 - Content events buffered and flushed with next trigger (same as app path)
 - EventProcessor runs client-side — engagement, buffering, formatting all local
 

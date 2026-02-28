@@ -294,6 +294,7 @@ export async function join(options: JoinOptions): Promise<void> {
     console.log();
     console.log(`  Invite a friend:       npx stoops join "${options.shareUrl}"`);
     console.log(`  Connect Claude Code:   npx stoops run claude --join "${options.shareUrl}"`);
+    console.log(`  Connect OpenCode:      npx stoops run opencode --join "${options.shareUrl}"`);
     console.log();
   }
 
