@@ -127,7 +127,11 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
 
     // ── SSE event stream ───────────────────────────────────────────────────
-    if (url.pathname === "/events" && req.method === "GET") {
+    // ⚠️  MUST accept POST — DO NOT change to GET-only.
+    // Cloudflare Quick Tunnels buffer GET streaming responses and only flush
+    // when the connection closes. POST streams in real-time. (cloudflared#1449)
+    // https://github.com/cloudflare/cloudflared/issues/1449
+    if (url.pathname === "/events" && (req.method === "GET" || req.method === "POST")) {
       const sessionToken = url.searchParams.get("token");
       const session = getSession(sessionToken);
 

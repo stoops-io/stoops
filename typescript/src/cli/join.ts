@@ -84,9 +84,11 @@ export async function join(options: JoinOptions): Promise<void> {
   // ── Disconnect helper ───────────────────────────────────────────────────
 
   let disconnected = false;
+  let cleanupStream: (() => void) | null = null;
   const disconnect = async () => {
     if (disconnected) return;
     disconnected = true;
+    cleanupStream?.();
     try {
       await fetch(`${serverUrl}/disconnect`, {
         method: "POST",
@@ -332,40 +334,50 @@ export async function join(options: JoinOptions): Promise<void> {
   }
 
   // ── Connect SSE event stream ────────────────────────────────────────────
+  // ⚠️  MUST use POST — DO NOT change to GET.
+  // Cloudflare Quick Tunnels buffer GET streaming responses and only flush
+  // when the connection closes. POST streams in real-time. (cloudflared#1449)
+  // https://github.com/cloudflare/cloudflared/issues/1449
 
-  try {
-    const res = await fetch(`${serverUrl}/events?token=${sessionToken}`, {
-      headers: { Accept: "text/event-stream" },
-    });
-
-    if (!res.ok || !res.body) {
-      console.error("Failed to connect event stream");
-      await disconnect();
-      process.exit(1);
-    }
-
-    // Track participant types and agent names from live events
+  {
     const participantTypes = new Map<string, "human" | "agent">();
     for (const p of participants) {
       participantTypes.set(p.id, p.type as "human" | "agent");
     }
     const currentAgents = new Set(agentNames);
+    let sseController: AbortController | null = null;
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    cleanupStream = () => {
+      if (sseController) { sseController.abort(); sseController = null; }
+    };
 
-    const processEvents = async () => {
+    const connectSSE = async () => {
+      sseController = new AbortController();
+
       try {
+        const res = await fetch(`${serverUrl}/events?token=${sessionToken}`, {
+          method: "POST",
+          headers: { Accept: "text/event-stream" },
+          signal: sseController.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          console.error("Failed to connect event stream");
+          await disconnect();
+          process.exit(1);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
-
-          // Parse SSE: split on double newline
           const parts = buffer.split("\n\n");
-          buffer = parts.pop()!; // keep incomplete chunk
+          buffer = parts.pop()!;
 
           for (const part of parts) {
             const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
@@ -374,7 +386,6 @@ export async function join(options: JoinOptions): Promise<void> {
             try {
               const event = JSON.parse(dataLine.slice(6)) as RoomEvent & { _replyToName?: string };
 
-              // Track participant types from presence events
               if (event.type === "ParticipantJoined") {
                 participantTypes.set(event.participant.id, event.participant.type);
               }
@@ -384,7 +395,6 @@ export async function join(options: JoinOptions): Promise<void> {
                 tui.push(displayEvent);
               }
 
-              // Update agent names on join/leave
               if (event.type === "ParticipantJoined" && event.participant.type === "agent") {
                 currentAgents.add(event.participant.name);
                 tui.setAgentNames([...currentAgents]);
@@ -401,23 +411,23 @@ export async function join(options: JoinOptions): Promise<void> {
             }
           }
         }
-      } catch {
-        // Stream ended
-      }
 
-      // Server disconnected — clean exit
-      if (!disconnected) {
-        tui.stop();
-        console.log("\nServer disconnected.");
-        process.exit(0);
+        // Stream ended — server closed connection
+        if (!disconnected) {
+          tui.stop();
+          console.log("\nServer disconnected.");
+          process.exit(0);
+        }
+      } catch {
+        if (!disconnected) {
+          tui.stop();
+          console.log("\nServer disconnected.");
+          process.exit(0);
+        }
       }
     };
 
-    processEvents();
-  } catch {
-    console.error("Failed to connect event stream");
-    await disconnect();
-    process.exit(1);
+    connectSSE();
   }
 
   // ── Graceful shutdown ───────────────────────────────────────────────────
