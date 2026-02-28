@@ -17,7 +17,7 @@ export interface JoinOptions {
   server: string;
   name?: string;
   guest?: boolean;
-  /** Tunnel URL to display in the TUI banner (for host+join mode with --share). */
+  /** Share URL to display before TUI starts (for host+join mode with --share). */
   shareUrl?: string;
 }
 
@@ -285,11 +285,20 @@ export async function join(options: JoinOptions): Promise<void> {
     }
   }
 
+  // Print share info via console.log BEFORE Ink renders. This lands in the
+  // terminal buffer above Ink's render area — plain text, no ANSI codes,
+  // fully selectable. Each line is a complete copyable command.
+  if (options.shareUrl) {
+    console.log();
+    console.log(`  Invite a friend:       npx stoops join "${options.shareUrl}"`);
+    console.log(`  Connect Claude Code:   npx stoops run claude --join "${options.shareUrl}"`);
+    console.log();
+  }
+
   const tui = startTUI({
     roomName,
-    serverUrl,
-    shareUrl: options.shareUrl,
     readOnly: isReadOnly,
+    isAdmin: authority === "admin",
     onSend: isReadOnly ? undefined : async (content: string) => {
       // Intercept slash commands
       if (content.startsWith("/")) {

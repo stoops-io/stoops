@@ -441,13 +441,15 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Ink-based terminal UI** — React components rendered via ink; used by `stoops join`
 - **5 DisplayEvent kinds** — `message`, `join`, `leave`, `mode`, `system` (new: for slash command output)
 - **`TUIHandle` interface** — `push(event)`, `setAgentNames(names)`, `stop()`; events queued before mount, drained on `onReady`
-- **Read-only mode** — when `readOnly` is true or `onSend` is undefined, hides `TextInput` and shows "watching as guest"
-- **Banner** — Figlet "slant" font with purple→cyan gradient; room name, server URL, share URL
+- **Custom input** — replaced `ink-text-input` with a single `useInput` handler for full control; supports multi-line messages via Option+Enter (⌥↵); continuation lines indented with `"  "` prefix; block cursor at end
+- **Read-only mode** — when `readOnly` is true or `onSend` is undefined, hides input and shows "watching as guest"
+- **Banner** — Figlet "slant" font with purple→cyan gradient; room name only (share info printed to stdout before Ink starts for copyability)
 - **Message feed** — `<Static>` items rendered once (selectable terminal text)
 - **Color system** — stoops-app palette; agents get rotating color + deterministic sigil
 - **System events** — rendered in `C.secondary` color for slash command output
+- **Slash command autocomplete** — typing `/` shows filtered command list with descriptions below the input line; arrow keys navigate, Enter/Tab completes, Escape dismisses; admin-only commands hidden for non-admins; 7 commands: `/who`, `/leave`, `/share`, `/kick`, `/mute`, `/wake`, `/setmode`
 - **Ctrl+C handling** — ink's default exit disabled; custom `useInput` handler calls `onCtrlC`
-- **Resize handling** — `stdout.on('resize')` triggers re-render
+- **No resize handler** — removed to prevent Ink `<Static>` cursor miscalculation and screen corruption on terminal resize; divider width updates naturally on next state change
 
 #### `stoops run claude` command (`run-claude.ts`)
 

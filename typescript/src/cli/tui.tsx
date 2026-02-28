@@ -7,7 +7,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { render, Box, Text, Static, useStdout, useInput } from "ink";
-import TextInput from "ink-text-input";
 
 // ── Palette (from stoops-app) ─────────────────────────────────────────────────
 
@@ -43,6 +42,26 @@ const BANNER_LINES = [
 
 const GRADIENT = ["#9b6dff", "#7c8bff", "#5da8ff", "#3dc4ff", "#1ddcff", "#00e8ff"];
 
+// ── Slash commands ────────────────────────────────────────────────────────────
+
+interface SlashCommand {
+  name: string;
+  description: string;
+  adminOnly?: boolean;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { name: "/who",     description: "List participants" },
+  { name: "/leave",   description: "Disconnect and exit" },
+  { name: "/share",   description: "Generate share links" },
+  { name: "/kick",    description: "Remove a participant", adminOnly: true },
+  { name: "/mute",    description: "Mute a participant", adminOnly: true },
+  { name: "/wake",    description: "Wake a participant", adminOnly: true },
+  { name: "/setmode", description: "Set engagement mode", adminOnly: true },
+];
+
+const CMD_COL = 12; // fixed width for command name column
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type DisplayEvent =
@@ -60,11 +79,10 @@ export interface TUIHandle {
 
 export interface TUIOptions {
   roomName: string;
-  serverUrl: string;
-  shareUrl?: string;
   onSend?(content: string): void;
   onCtrlC?(): void;
   readOnly?: boolean;
+  isAdmin?: boolean;
 }
 
 // ── Identity (seed → color + sigil) ──────────────────────────────────────────
@@ -198,24 +216,23 @@ type StaticEntry = { id: string; event?: DisplayEvent };
 
 function App({
   roomName,
-  serverUrl,
-  shareUrl,
   onSend,
   onCtrlC,
   onReady,
   readOnly,
+  isAdmin,
 }: {
   roomName: string;
-  serverUrl: string;
-  shareUrl?: string;
   onSend?: (content: string) => void;
   onCtrlC?: () => void;
   onReady: (handle: AppHandle) => void;
   readOnly?: boolean;
+  isAdmin?: boolean;
 }) {
-  const [events,     setEvents]     = useState<DisplayEvent[]>([]);
-  const [agentNames, setAgentNames] = useState<string[]>([]);
-  const [input,      setInput]      = useState("");
+  const [events,        setEvents]        = useState<DisplayEvent[]>([]);
+  const [agentNames,    setAgentNames]    = useState<string[]>([]);
+  const [input,         setInput]         = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(0);
   const { stdout } = useStdout();
   const identify   = useMemo(makeIdentityAssigner, []);
 
@@ -228,16 +245,85 @@ function App({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-render footer on resize (divider width)
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const onResize = () => setTick((t) => t + 1);
-    stdout.on("resize", onResize);
-    return () => { stdout.off("resize", onResize); };
-  }, [stdout]);
+  // Note: no resize handler — Ink's <Static> items are already committed to the
+  // terminal buffer. Forcing a re-render on resize causes cursor position
+  // miscalculation and screen corruption. The divider width updates naturally
+  // on the next state change (new event, input change, etc.).
+
+  // ── Slash command suggestions ──────────────────────────────────────────────
+
+  // Only the command prefix (before first space) drives suggestions
+  const cmdPrefix = input.startsWith("/") && !input.includes(" ") ? input.toLowerCase() : null;
+
+  const suggestions = useMemo(() => {
+    if (!cmdPrefix) return [];
+    return SLASH_COMMANDS.filter((cmd) => {
+      if (cmd.adminOnly && !isAdmin) return false;
+      return cmd.name.startsWith(cmdPrefix);
+    });
+  }, [cmdPrefix, isAdmin]);
+
+  // Reset selection when the filter changes
+  useEffect(() => { setSelectedIndex(0); }, [cmdPrefix]);
+
+  // ── Keyboard ───────────────────────────────────────────────────────────────
+  // Single useInput handles everything — no TextInput, no dual-handler conflicts.
 
   useInput((char, key) => {
-    if (key.ctrl && char === "c") onCtrlC?.();
+    if (key.ctrl && char === "c") { onCtrlC?.(); return; }
+    if (readOnly || !onSend) return;
+
+    // Suggestion navigation
+    if (suggestions.length > 0) {
+      if (key.downArrow) {
+        setSelectedIndex((i) => Math.min(i + 1, suggestions.length - 1));
+        return;
+      }
+      if (key.upArrow) {
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (key.return || key.tab) {
+        const picked = suggestions[selectedIndex];
+        if (picked) setInput(picked.name + " ");
+        return;
+      }
+      if (key.escape) {
+        setInput("");
+        return;
+      }
+    }
+
+    // Option+Enter → newline
+    if (key.return && key.meta) {
+      setInput((prev) => prev + "\n");
+      return;
+    }
+
+    // Enter → submit
+    if (key.return) {
+      const content = input.trim();
+      if (content) onSend(content);
+      setInput("");
+      return;
+    }
+
+    // Backspace
+    if (key.backspace || key.delete) {
+      setInput((prev) => prev.slice(0, -1));
+      return;
+    }
+
+    // Ignore special keys
+    if (key.ctrl || key.meta || key.escape || key.tab ||
+        key.upArrow || key.downArrow || key.leftArrow || key.rightArrow) {
+      return;
+    }
+
+    // Regular character
+    if (char) {
+      setInput((prev) => prev + char);
+    }
   });
 
   const cols = stdout.columns ?? 80;
@@ -261,27 +347,8 @@ function App({
                 ))}
                 <Text>{" "}</Text>
                 <Text>
-                  <Text color={C.dim}>{"  room      "}</Text>
-                  <Text color={C.cyan}>{roomName}</Text>
-                </Text>
-                {shareUrl && (
-                  <Text>
-                    <Text color={C.dim}>{"  url       "}</Text>
-                    <Text color={C.cyan}>{shareUrl}</Text>
-                  </Text>
-                )}
-                <Text>{" "}</Text>
-                <Text>
-                  <Text color={C.dim}>{"  human     "}</Text>
-                  <Text color={C.secondary}>{`stoops join ${shareUrl ?? serverUrl}`}</Text>
-                </Text>
-                <Text>
-                  <Text color={C.dim}>{"  claude    "}</Text>
-                  <Text color={C.secondary}>
-                    {shareUrl
-                      ? `stoops run claude --room ${roomName} --server ${shareUrl}`
-                      : `stoops run claude --room ${roomName}`}
-                  </Text>
+                  <Text color={C.dim}>{"  room  "}</Text>
+                  <Text color={C.cyan} bold>{roomName}</Text>
                 </Text>
               </Box>
             );
@@ -314,17 +381,34 @@ function App({
           <Text color={C.muted}>{"  watching as guest"}</Text>
         </Box>
       ) : (
-        <Box paddingX={1}>
-          <Text color={C.cyan} bold>{"› "}</Text>
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={(value) => {
-              const content = value.trim();
-              if (content) onSend(content);
-              setInput("");
-            }}
-          />
+        <Box paddingX={1} flexDirection="column">
+          {/* Render each line; first line gets the prompt, rest get indentation */}
+          {(input || "").split("\n").map((line, i, arr) => (
+            <Box key={i}>
+              <Text color={C.cyan} bold>{i === 0 ? "› " : "  "}</Text>
+              <Text>
+                {line}
+                {i === arr.length - 1 && <Text inverse>{" "}</Text>}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {/* Slash command suggestions — below input */}
+      {suggestions.length > 0 && (
+        <Box flexDirection="column" paddingX={1}>
+          {suggestions.map((cmd, i) => {
+            const selected = i === selectedIndex;
+            return (
+              <Box key={cmd.name}>
+                <Text color={selected ? C.cyan : C.muted}>{selected ? "* " : "  "}</Text>
+                <Text color={selected ? C.cyan : C.secondary} bold={selected}>
+                  {cmd.name.padEnd(CMD_COL)}
+                </Text>
+                <Text color={C.dim}>{cmd.description}</Text>
+              </Box>
+            );
+          })}
         </Box>
       )}
     </>
@@ -345,12 +429,11 @@ export function startTUI(opts: TUIOptions): TUIHandle {
   const { unmount } = render(
     <App
       roomName={opts.roomName}
-      serverUrl={opts.serverUrl}
-      shareUrl={opts.shareUrl}
       onSend={opts.onSend}
       onCtrlC={opts.onCtrlC}
       onReady={onReady}
       readOnly={opts.readOnly}
+      isAdmin={opts.isAdmin}
     />,
     { exitOnCtrlC: false },
   );
