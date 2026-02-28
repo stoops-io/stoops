@@ -6,7 +6,6 @@
  * nothing written to ~/.claude.json).
  */
 
-import { execFileSync } from "node:child_process";
 import {
   tmuxAvailable,
   tmuxCreateSession,
@@ -15,6 +14,7 @@ import {
   tmuxKillSession,
   tmuxSessionExists,
 } from "./tmux.js";
+import { randomName } from "../core/names.js";
 
 export interface RunClaudeOptions {
   room: string;
@@ -24,7 +24,7 @@ export interface RunClaudeOptions {
 
 export async function runClaude(options: RunClaudeOptions): Promise<void> {
   const serverUrl = options.server ?? "http://127.0.0.1:7890";
-  const agentName = options.name ?? `claude-${Date.now().toString(36).slice(-4)}`;
+  const agentName = options.name ?? randomName();
 
   // ── Preflight checks ────────────────────────────────────────────────────
 

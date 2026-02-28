@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 
 import { Room } from "../core/room.js";
 import { InMemoryStorage } from "../core/storage.js";
+import { randomRoomName } from "../core/names.js";
 import type { RoomEvent } from "../core/events.js";
 import { EventProcessor } from "../agent/event-processor.js";
 import { contentPartsToString, participantLabel, formatTimestamp } from "../agent/prompts.js";
@@ -65,7 +66,7 @@ function formatSnapshotLine(event: RoomEvent): string {
 // ── Main serve command ───────────────────────────────────────────────────────
 
 export async function serve(options: ServeOptions): Promise<void> {
-  const roomName = options.room ?? "lobby";
+  const roomName = options.room ?? randomRoomName();
   const port = options.port ?? 7890;
 
   // Create room

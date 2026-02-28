@@ -22,3 +22,4 @@ export {
 export { type StorageProtocol, InMemoryStorage } from "./storage.js";
 export { Channel } from "./channel.js";
 export { Room } from "./room.js";
+export { randomName, randomRoomName } from "./names.js";
