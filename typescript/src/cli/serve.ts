@@ -2,8 +2,8 @@
  * stoops serve — room server process.
  *
  * Creates a room, hosts an HTTP API for agent registration,
- * runs EventProcessor per agent with tmux injection, and provides a
- * readline interface for human chat.
+ * runs EventProcessor per agent with tmux injection, and provides either
+ * an ink TUI (default when stdout is a TTY) or a plain headless log.
  */
 
 import { createServer } from "node:http";
@@ -21,9 +21,10 @@ import { EventProcessor } from "../agent/event-processor.js";
 import { contentPartsToString, participantLabel, formatTimestamp } from "../agent/prompts.js";
 import { handleSendMessage } from "../agent/tool-handlers.js";
 import { tmuxInjectText, tmuxSessionExists, tmuxSendEnter } from "./tmux.js";
+import { startTUI, type TUIHandle, type DisplayEvent } from "./tui.js";
 import { z } from "zod";
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ConnectedAgent {
   id: string;
@@ -38,6 +39,7 @@ interface ConnectedAgent {
 export interface ServeOptions {
   room?: string;
   port?: number;
+  headless?: boolean;
 }
 
 // ── Snapshot helper ──────────────────────────────────────────────────────────
@@ -68,6 +70,8 @@ function formatSnapshotLine(event: RoomEvent): string {
 export async function serve(options: ServeOptions): Promise<void> {
   const roomName = options.room ?? randomRoomName();
   const port = options.port ?? 7890;
+  const serverUrl = `http://127.0.0.1:${port}`;
+  const useTUI = !(options.headless ?? !process.stdout.isTTY);
 
   // Create room
   const storage = new InMemoryStorage();
@@ -80,12 +84,61 @@ export async function serve(options: ServeOptions): Promise<void> {
   const humanId = "human_" + randomUUID().slice(0, 8);
   const humanChannel = await room.connect(humanId, "you", "human");
 
-  // Log room events to stdout
+  // ── TUI or headless setup ─────────────────────────────────────────────────
+
+  let tui: TUIHandle | null = null;
+  let rl: ReturnType<typeof createInterface> | null = null;
+
+  if (useTUI) {
+    tui = startTUI({
+      roomName,
+      serverUrl,
+      onSend: (content) => {
+        humanChannel.sendMessage(content).catch(console.error);
+      },
+      onCtrlC: () => {
+        shutdown().catch(console.error);
+      },
+    });
+
+    // Human joined before observer started — push it manually
+    tui.push({
+      id: randomUUID(),
+      ts: formatTimestamp(new Date()),
+      kind: "join",
+      name: "you",
+      participantType: "human",
+    });
+  } else {
+    // Headless: readline for human input
+    rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: "> ",
+    });
+    rl.prompt();
+    rl.on("line", (line) => {
+      const content = line.trim();
+      if (content) {
+        humanChannel.sendMessage(content).catch((err) => {
+          console.error("Failed to send message:", err);
+        });
+      }
+      rl!.prompt();
+    });
+  }
+
+  // ── Room observer ─────────────────────────────────────────────────────────
+
   const observer = room.observe();
   (async () => {
     try {
       for await (const event of observer) {
-        printEvent(event, roomName, room);
+        if (tui) {
+          pushEventToTUI(tui, event, room);
+        } else {
+          printEvent(event, roomName, room);
+        }
       }
     } catch {
       // Observer disconnected
@@ -281,45 +334,28 @@ export async function serve(options: ServeOptions): Promise<void> {
   });
 
   httpServer.listen(port, "127.0.0.1", () => {
-    console.log(`
-  stoops v${process.env.npm_package_version ?? "0.3.0"}
+    if (!useTUI) {
+      const version = process.env.npm_package_version ?? "0.3.0";
+      console.log(`
+  stoops v${version}
 
   Room: ${roomName}
-  Server: http://127.0.0.1:${port}
+  Server: ${serverUrl}
 
   Connect an agent:
     stoops run claude --room ${roomName}
     stoops run claude --room ${roomName} --name agent
 `);
-    console.log(`[${formatTimestamp(new Date())}] Room "${roomName}" created`);
-    console.log(`[${formatTimestamp(new Date())}] [human] you joined`);
-  });
-
-  // ── Human readline ──────────────────────────────────────────────────────
-
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: "> ",
-  });
-
-  rl.prompt();
-
-  rl.on("line", (line) => {
-    const content = line.trim();
-    if (content) {
-      humanChannel.sendMessage(content).catch((err) => {
-        console.error("Failed to send message:", err);
-      });
+      console.log(`[${formatTimestamp(new Date())}] Room "${roomName}" created`);
+      console.log(`[${formatTimestamp(new Date())}] [human] you joined`);
     }
-    rl.prompt();
   });
 
   // ── Graceful shutdown ──────────────────────────────────────────────────
 
   const shutdown = async () => {
-    console.log("\nShutting down...");
-    rl.close();
+    rl?.close();
+    tui?.stop();
     observer.disconnect();
     for (const agent of agents.values()) {
       await agent.processor.stop();
@@ -333,7 +369,70 @@ export async function serve(options: ServeOptions): Promise<void> {
   process.on("SIGTERM", shutdown);
 }
 
-// ── Event display ────────────────────────────────────────────────────────────
+// ── TUI event bridge ─────────────────────────────────────────────────────────
+
+function pushEventToTUI(tui: TUIHandle, event: RoomEvent, room: Room): void {
+  const ts = formatTimestamp(new Date(event.timestamp));
+
+  switch (event.type) {
+    case "MessageSent": {
+      const msg = event.message;
+      const sender = room.listParticipants().find((p) => p.id === msg.sender_id);
+      const displayEvent: DisplayEvent = {
+        id: msg.id,
+        ts,
+        kind: "message",
+        senderName: msg.sender_name,
+        senderType: sender?.type ?? "human",
+        isSelf: msg.sender_name === "you",
+        content: msg.content,
+      };
+      tui.push(displayEvent);
+      break;
+    }
+    case "ParticipantJoined": {
+      tui.push({
+        id: randomUUID(),
+        ts,
+        kind: "join",
+        name: event.participant.name,
+        participantType: event.participant.type,
+      });
+      tui.setAgentNames(
+        room.listParticipants().filter((p) => p.type === "agent").map((p) => p.name),
+      );
+      break;
+    }
+    case "ParticipantLeft": {
+      tui.push({
+        id: randomUUID(),
+        ts,
+        kind: "leave",
+        name: event.participant.name,
+        participantType: event.participant.type,
+      });
+      tui.setAgentNames(
+        room.listParticipants().filter((p) => p.type === "agent").map((p) => p.name),
+      );
+      break;
+    }
+    case "Activity": {
+      if (event.action === "mode_changed") {
+        tui.push({
+          id: randomUUID(),
+          ts,
+          kind: "mode",
+          mode: String((event.detail as Record<string, unknown>)?.mode ?? ""),
+        });
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// ── Headless event display ────────────────────────────────────────────────────
 
 function printEvent(event: RoomEvent, roomName: string, room: Room): void {
   const ts = formatTimestamp(new Date(event.timestamp));
@@ -354,7 +453,7 @@ function printEvent(event: RoomEvent, roomName: string, room: Room): void {
       break;
     case "Activity":
       if (event.action === "mode_changed") {
-        console.log(`[${ts}] mode → ${event.detail?.mode}`);
+        console.log(`[${ts}] mode → ${(event.detail as Record<string, unknown>)?.mode}`);
       }
       break;
     default:

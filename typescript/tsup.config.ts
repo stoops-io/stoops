@@ -13,6 +13,9 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   target: "es2022",
+  esbuildOptions(options) {
+    options.jsx = "automatic";
+  },
   external: [
     // LangChain — optional deps, not bundled
     "@langchain/core",

@@ -38,17 +38,18 @@ async function main(): Promise<void> {
   // stoops --help
   if (args.includes("--help") || args.includes("-h")) {
     console.log("Usage:");
-    console.log("  stoops [--room <name>] [--port <port>]           Start the room server");
-    console.log("  stoops run claude --room <name> [--name <name>]  Connect Claude Code");
+    console.log("  stoops [--room <name>] [--port <port>] [--headless]  Start the room server");
+    console.log("  stoops run claude --room <name> [--name <name>]       Connect Claude Code");
     return;
   }
 
-  // stoops [--room <name>] [--port <port>]
+  // stoops [--room <name>] [--port <port>] [--headless]
   if (args.length === 0 || args[0]?.startsWith("--")) {
     const portStr = getFlag("port");
     await serve({
       room: getFlag("room"),
       port: portStr ? parseInt(portStr, 10) : undefined,
+      headless: args.includes("--headless"),
     });
     return;
   }

@@ -42,9 +42,10 @@ cd typescript && npm run build     # build first
 
 **Terminal 1 — start a room:**
 ```bash
-npx stoops --room lobby
+npx stoops --room lobby            # TUI mode (ink-based UI)
+npx stoops --room lobby --headless # headless mode (plain log output)
 ```
-This creates an in-memory room, starts an HTTP server (default port 7890), and gives you a chat prompt. Type messages as a human participant.
+TUI mode (default): ink-based terminal UI with header, topographic idle animation, colored message feed, and input field. Headless mode: plain event log to stdout with readline input — useful for agents running the room or piped output.
 
 **Terminal 2 — connect Claude Code:**
 ```bash
@@ -54,7 +55,7 @@ This registers with the server, adds an MCP server to Claude Code, launches `cla
 
 **Options:**
 ```bash
-npx stoops --room <name> --port <port>
+npx stoops --room <name> --port <port> [--headless]
 npx stoops run claude --room <name> --name <agent-name> --server <url>
 ```
 
@@ -305,15 +306,25 @@ What's built, what works, what's planned. **Always update this section after imp
 #### `stoops` command (`serve.ts`)
 
 - **Room server** — creates in-memory room (`InMemoryStorage`), holds all state in one process
+- **Two display modes**:
+  - **TUI mode** (default when stdout is a TTY) — ink-based terminal UI (`tui.tsx`) with header bar, scrollable message feed, input field, and topographic idle animation; human input via ink `TextInput`
+  - **Headless mode** (`--headless` flag or non-TTY stdout) — plain `console.log` event output; human input via readline; suitable for agents running the room or piped output
+- **TUI features** (`tui.tsx`):
+  - **Header** — `stoops · room-name · url · ◆ agent1, ▲ agent2`; agent names colored with palette; sigils seeded from agent name (same `hash(seed)` approach as StoopFace)
+  - **Idle state** — topographic contour animation (rotating concentric rings via wave interference: `sin(r*freq - phase)`) centered in message area; system events (join/leave/mode) shown below animation; switches to message feed on first chat message
+  - **Message feed** — messages bottom-aligned via flexbox spacer; `↑ N more` overflow indicator when history exceeds visible capacity; `height={rows}` root constraint via Yoga layout
+  - **Color system** — stoops-app palette (`#00d4ff` cyan, `#8b5cf6` purple, `#ff8c42` orange, `#f472b6` pink, `#34d399` green, `#fbbf24` yellow); agents get rotating color + deterministic sigil; colored keywords: "joined" green, "left" red, mode name yellow bold
+  - **Identity assigner** — `makeIdentityAssigner()` maps agent names to `{ color, sigil }` pairs; color rotates through palette, sigil seeded by `hash(name) % SIGILS.length`
+  - **Ctrl+C handling** — ink's default exit disabled (`exitOnCtrlC: false`); custom `useInput` handler calls `onCtrlC` callback for graceful async shutdown
+  - **Resize handling** — `stdout.on('resize')` triggers re-render; row/col counts recalculated; divider width = `cols - 2` (prevents line-wrap overflow)
+  - **External bridge** — `startTUI()` returns `TUIHandle` with `push(event)`, `setAgentNames(names)`, `stop()`; events queued before React mount, drained on `onReady`
 - **HTTP API** on configurable port (default 7890):
   - `POST /join` — agent registers, gets assigned ID, MCP URL, temp directory; server creates `EventProcessor` and room channel per agent
   - `POST /connect` — agent reports tmux session name; server starts `EventProcessor.run()` with tmux delivery
   - `POST /disconnect` — agent teardown; stops processor, disconnects channel
   - `/mcp?agent=<id>` — per-agent MCP endpoint with `send_message` + `snapshot_room` tools; MCP server created once at `/join` time, reused across requests
-- **Human participant** — readline stdin for chat input; messages sent via a human channel
-- **Live event log** — room observer prints all events to stdout (joins, leaves, messages, mode changes)
 - **Per-agent EventProcessor** — engagement model, content buffering, event formatting all run in the server process; delivery via `tmux send-keys` to the agent's tmux session
-- **Graceful shutdown** — Ctrl+C disconnects all agents and human, closes HTTP server
+- **Graceful shutdown** — Ctrl+C disconnects all agents and human, closes HTTP server; TUI mode: `tui.stop()` unmounts ink; headless mode: `rl.close()`
 
 #### `stoops run claude` command (`run-claude.ts`)
 
