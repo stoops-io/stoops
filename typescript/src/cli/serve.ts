@@ -1,50 +1,39 @@
 /**
- * stoops serve — headless room server.
+ * stoops serve — dumb room server.
  *
- * Creates a room, hosts an HTTP API for agent registration and human
- * participation. Humans connect via `stoops join`, agents via `stoops run claude`.
- * All event delivery happens over SSE (humans) or tmux injection (agents).
+ * One room, one HTTP API, SSE broadcasting, authority enforcement.
+ * No EventProcessor, no tmux, no agent lifecycle — those live client-side.
+ * Humans connect via `stoops join`, agents via `stoops run claude`.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { Room } from "../core/room.js";
 import { InMemoryStorage } from "../core/storage.js";
 import { randomRoomName, randomName } from "../core/names.js";
-import type { RoomEvent } from "../core/events.js";
+import { createEvent, type ActivityEvent, type RoomEvent } from "../core/events.js";
+import type { AuthorityLevel } from "../core/types.js";
 import type { Channel } from "../core/channel.js";
-import { EventProcessor } from "../agent/event-processor.js";
-import { contentPartsToString, formatTimestamp } from "../agent/prompts.js";
-import { handleSendMessage } from "../agent/tool-handlers.js";
-import { tmuxInjectText, tmuxSessionExists, tmuxSendEnter } from "./tmux.js";
-import { z } from "zod";
+import { formatTimestamp } from "../agent/prompts.js";
+import { TokenManager, buildShareUrl } from "./auth.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface ConnectedAgent {
+interface ConnectedParticipant {
   id: string;
   name: string;
-  processor: EventProcessor;
-  tmuxSession: string | null;
-  tmpDir: string;
-  running: boolean;
-  runPromise: Promise<void> | null;
-}
-
-interface ConnectedHuman {
-  id: string;
-  name: string;
+  authority: AuthorityLevel;
   channel: Channel;
+  sessionToken: string;
 }
 
-interface ConnectedGuest {
+interface ConnectedObserver {
   id: string;
-  observer: Channel;
+  authority: "observer";
+  channel: Channel;
+  sessionToken: string;
 }
 
 export interface ServeOptions {
@@ -54,27 +43,12 @@ export interface ServeOptions {
   quiet?: boolean;
 }
 
-// ── Snapshot helper ──────────────────────────────────────────────────────────
-
-function formatSnapshotLine(event: RoomEvent): string {
-  const ts = formatTimestamp(new Date(event.timestamp));
-  switch (event.type) {
-    case "MessageSent": {
-      const msg = event.message;
-      if (msg.reply_to_id) {
-        return `[${ts}] MSG #${msg.id.slice(0, 4)} ${msg.sender_name} → #${msg.reply_to_id.slice(0, 4)}: ${msg.content}`;
-      }
-      return `[${ts}] MSG #${msg.id.slice(0, 4)} ${msg.sender_name}: ${msg.content}`;
-    }
-    case "ParticipantJoined":
-      return `[${ts}] JOIN ${event.participant.name}`;
-    case "ParticipantLeft":
-      return `[${ts}] LEFT ${event.participant.name}`;
-    case "ReactionAdded":
-      return `[${ts}] REACT ${event.participant_id} ${event.emoji} → #${event.message_id.slice(0, 4)}`;
-    default:
-      return `[${ts}] ${event.type}`;
-  }
+export interface ServeResult {
+  serverUrl: string;
+  publicUrl: string;
+  roomName: string;
+  adminToken: string;
+  participantToken: string;
 }
 
 // ── SSE helper ───────────────────────────────────────────────────────────────
@@ -94,19 +68,11 @@ async function enrichAndSend(res: ServerResponse, event: RoomEvent, room: Room):
 
 // ── Main serve command ───────────────────────────────────────────────────────
 
-export interface ServeResult {
-  serverUrl: string;
-  publicUrl: string;
-  roomName: string;
-}
-
 export async function serve(options: ServeOptions): Promise<ServeResult> {
   const roomName = options.room ?? randomRoomName();
   const port = options.port ?? 7890;
   const serverUrl = `http://127.0.0.1:${port}`;
 
-  // Public URL — either the tunnel URL (if --share) or the local server URL.
-  // Updated once the tunnel is ready.
   let publicUrl = serverUrl;
   let tunnelProcess: ChildProcess | null = null;
 
@@ -114,84 +80,17 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   const storage = new InMemoryStorage();
   const room = new Room(roomName, storage);
 
-  // Connected participants
-  const agents = new Map<string, ConnectedAgent>();
-  const humans = new Map<string, ConnectedHuman>();
-  const guests = new Map<string, ConnectedGuest>();
+  // Auth
+  const tokens = new TokenManager();
+
+  // Connected participants and observers (by session token for lookup)
+  const participants = new Map<string, ConnectedParticipant>();
+  const observers = new Map<string, ConnectedObserver>();
+  // Reverse lookup: participantId → sessionToken
+  const idToSession = new Map<string, string>();
 
   // Track active SSE connections for cleanup
   const sseConnections = new Map<string, ServerResponse>();
-
-  // ── MCP tool registration helper ─────────────────────────────────────────
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function registerMcpTools(mcpServer: any, agent: ConnectedAgent): Promise<void> {
-    const toolOptions = {
-      assignRef: (id: string) => agent.processor.assignRef(id),
-      resolveRef: (ref: string) => agent.processor.resolveRef(ref),
-    };
-
-    mcpServer.tool(
-      "send_message",
-      "Send a message to a specific room. Only use this when you have something genuinely worth saying — a reaction, an answer, a question, a joke. Most of the time, staying quiet is the right call. Not every message needs a response.",
-      {
-        room: z.string().describe("Name of the room to send to"),
-        content: z.string().describe("Message content"),
-        reply_to_id: z.string().optional()
-          .describe("Only set this when replying to a specific earlier message adds clarity. Use the #XXXX ref shown in snapshot output."),
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      async (args: any) => handleSendMessage(agent.processor, args, toolOptions) as any,
-    );
-
-    mcpServer.tool(
-      "snapshot_room",
-      "Get a searchable copy of the room's event history as a file. Use grep, tail, or Read on the returned path.",
-      {
-        room: z.string().describe("Name of the room to snapshot"),
-      },
-      async ({ room: roomArg }: { room: string }) => {
-        const conn = agent.processor.resolve(roomArg);
-        if (!conn) {
-          return { content: [{ type: "text" as const, text: `Unknown room "${roomArg}".` }] };
-        }
-
-        const events = await conn.room.listEvents(undefined, 1000);
-        const participants = conn.room.listParticipants();
-        const pList = participants.map((p) => `${p.type} ${p.name}`).join(", ");
-
-        const lines: string[] = [
-          `=== ${roomArg} ===`,
-          `participants: ${pList}`,
-          `snapshot: ${events.items.length} events`,
-          "===",
-          "",
-        ];
-
-        for (const event of [...events.items].reverse()) {
-          lines.push(formatSnapshotLine(event));
-        }
-
-        const filePath = join(agent.tmpDir, `${roomArg}.log`);
-        writeFileSync(filePath, lines.join("\n") + "\n");
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: [
-              `Snapshot written to: ${filePath}`,
-              `Events: ${events.items.length}`,
-              "",
-              "Tips:",
-              `  grep 'MSG.*keyword' ${filePath}     # search content`,
-              `  grep '#ref' ${filePath}              # find a message by ref`,
-              `  tail -n 50 ${filePath}               # recent events`,
-            ].join("\n"),
-          }],
-        };
-      },
-    );
-  }
 
   // ── JSON body parser helper ──────────────────────────────────────────────
 
@@ -201,6 +100,27 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     try { return JSON.parse(Buffer.concat(chunks).toString()); } catch { return {}; }
   }
 
+  // ── Auth helper ──────────────────────────────────────────────────────────
+
+  function getSession(token: string | null) {
+    if (!token) return null;
+    const p = participants.get(token);
+    if (p) return { ...p, kind: "participant" as const };
+    const o = observers.get(token);
+    if (o) return { ...o, kind: "observer" as const };
+    return null;
+  }
+
+  function jsonError(res: ServerResponse, status: number, error: string): void {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error }));
+  }
+
+  function jsonOk(res: ServerResponse, data: Record<string, unknown> = {}): void {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, ...data }));
+  }
+
   // ── HTTP API ────────────────────────────────────────────────────────────
 
   const httpServer = createServer(async (req, res) => {
@@ -208,20 +128,11 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
 
     // ── SSE event stream ───────────────────────────────────────────────────
     if (url.pathname === "/events" && req.method === "GET") {
-      const id = url.searchParams.get("id");
-      if (!id) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Missing id parameter" }));
-        return;
-      }
+      const sessionToken = url.searchParams.get("token");
+      const session = getSession(sessionToken);
 
-      const human = humans.get(id);
-      const guest = guests.get(id);
-      const channel = human?.channel ?? guest?.observer;
-
-      if (!channel) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Participant not found" }));
+      if (!session) {
+        jsonError(res, 401, "Invalid session token");
         return;
       }
 
@@ -234,7 +145,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
       });
       res.flushHeaders();
 
-      sseConnections.set(id, res);
+      sseConnections.set(session.id, res);
 
       // Send recent history so the joiner has context
       const history = await room.listEvents(undefined, 50);
@@ -245,7 +156,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
       // Live event stream
       const streamEvents = async () => {
         try {
-          for await (const event of channel) {
+          for await (const event of session.channel) {
             await enrichAndSend(res, event, room);
           }
         } catch {
@@ -256,221 +167,323 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
 
       // Cleanup on client disconnect
       req.on("close", () => {
-        sseConnections.delete(id);
-        if (human) {
-          human.channel.disconnect().catch(() => {});
-          humans.delete(id);
-          logServer(`${human.name} disconnected`);
-        }
-        if (guest) {
-          guest.observer.disconnect().catch(() => {});
-          guests.delete(id);
-        }
+        sseConnections.delete(session.id);
       });
       return;
     }
 
-    // ── MCP endpoint — per-request McpServer, routed by agent ID ───────────
-    if (url.pathname === "/mcp") {
-      const agentId = url.searchParams.get("agent");
-      const agent = agentId ? agents.get(agentId) : undefined;
+    // ── GET endpoints ─────────────────────────────────────────────────────
 
-      if (!agent) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Agent not found" }));
+    if (req.method === "GET") {
+      const sessionToken = url.searchParams.get("token");
+      const session = getSession(sessionToken);
+
+      // ── GET /participants ────────────────────────────────────────────────
+      if (url.pathname === "/participants") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        const list = room.listParticipants().map((p) => ({
+          id: p.id,
+          name: p.name,
+          type: p.type,
+          authority: p.authority ?? "participant",
+        }));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ participants: list }));
         return;
       }
 
-      const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-      const { StreamableHTTPServerTransport } = await import(
-        "@modelcontextprotocol/sdk/server/streamableHttp.js"
-      );
-
-      const mcpServer = new McpServer({ name: "stoops", version: "1.0.0" });
-      await registerMcpTools(mcpServer, agent);
-
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      await mcpServer.connect(transport);
-
-      let body: unknown;
-      if (req.method === "POST") {
-        const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
-        try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { body = undefined; }
+      // ── GET /message/:id ─────────────────────────────────────────────────
+      if (url.pathname.startsWith("/message/")) {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        const messageId = url.pathname.slice("/message/".length);
+        const msg = await room.getMessage(messageId);
+        if (!msg) return jsonError(res, 404, "Message not found");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ message: msg }));
+        return;
       }
 
-      await transport.handleRequest(req, res, body);
-      return;
+      // ── GET /messages ────────────────────────────────────────────────────
+      if (url.pathname === "/messages") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        const count = parseInt(url.searchParams.get("count") ?? "30", 10);
+        const cursor = url.searchParams.get("cursor") ?? null;
+        const result = await room.listMessages(count, cursor);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      // ── GET /events/history ──────────────────────────────────────────────
+      if (url.pathname === "/events/history") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        const category = url.searchParams.get("category") ?? null;
+        const count = parseInt(url.searchParams.get("count") ?? "50", 10);
+        const cursor = url.searchParams.get("cursor") ?? null;
+        const result = await room.listEvents(category as any, count, cursor);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
+
+      // ── GET /search ──────────────────────────────────────────────────────
+      if (url.pathname === "/search") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        const query = url.searchParams.get("query") ?? "";
+        if (!query) return jsonError(res, 400, "Missing query parameter");
+        const count = parseInt(url.searchParams.get("count") ?? "10", 10);
+        const cursor = url.searchParams.get("cursor") ?? null;
+        const result = await room.searchMessages(query, count, cursor);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+        return;
+      }
     }
 
-    // ── JSON API ────────────────────────────────────────────────────────────
+    // ── POST endpoints ────────────────────────────────────────────────────
+
     if (req.method === "POST") {
       const body = await parseBody(req);
 
       // ── POST /join ──────────────────────────────────────────────────────
       if (url.pathname === "/join") {
-        const type = String(body.type ?? "agent");
+        // Accept share token OR legacy type-based join
+        const shareToken = String(body.token ?? "");
+        const legacyType = String(body.type ?? "");
 
-        if (type === "human") {
-          const name = String(body.name ?? randomName());
-          const id = `human_${randomUUID().slice(0, 8)}`;
-          const channel = await room.connect(id, name, "human");
-          humans.set(id, { id, name, channel });
+        let authority: AuthorityLevel;
 
-          const participants = room.listParticipants().map((p) => ({
+        if (shareToken) {
+          const tokenAuthority = tokens.validateShareToken(shareToken);
+          if (!tokenAuthority) return jsonError(res, 403, "Invalid share token");
+          authority = tokenAuthority;
+        } else if (legacyType === "guest") {
+          authority = "observer";
+        } else if (legacyType === "human") {
+          authority = "participant";
+        } else {
+          // Default: agent joins as participant
+          authority = "participant";
+        }
+
+        const participantType = String(body.type ?? "human") as "human" | "agent";
+        const name = String(body.name ?? randomName());
+
+        if (authority === "observer") {
+          const id = `obs_${randomUUID().slice(0, 8)}`;
+          const channel = room.observe();
+          const sessionToken = tokens.createSessionToken(id, "observer");
+
+          observers.set(sessionToken, { id, authority: "observer", channel, sessionToken });
+          idToSession.set(id, sessionToken);
+
+          const participantList = room.listParticipants().map((p) => ({
             id: p.id,
             name: p.name,
             type: p.type,
-          }));
-
-          logServer(`${name} joined`);
-
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ participantId: id, roomName, participants }));
-          return;
-        }
-
-        if (type === "guest") {
-          const id = `guest_${randomUUID().slice(0, 8)}`;
-          const observer = room.observe();
-          guests.set(id, { id, observer });
-
-          const participants = room.listParticipants().map((p) => ({
-            id: p.id,
-            name: p.name,
-            type: p.type,
+            authority: p.authority ?? "participant",
           }));
 
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ participantId: id, roomName, participants }));
+          res.end(JSON.stringify({
+            sessionToken,
+            participantId: id,
+            roomName,
+            roomId: room.roomId,
+            participants: participantList,
+            authority: "observer",
+          }));
           return;
         }
 
-        // type === "agent" (default, backward compatible)
-        const name = String(body.name ?? `agent-${agents.size + 1}`);
-        const agentId = `agent_${randomUUID().slice(0, 8)}`;
-        const tmpDir = `${tmpdir()}/stoops_${agentId}`;
-        mkdirSync(tmpDir, { recursive: true });
+        // admin or participant — connect as a real participant
+        const id = `${participantType}_${randomUUID().slice(0, 8)}`;
+        const channel = await room.connect(id, name, participantType, undefined, undefined, false, authority);
+        const sessionToken = tokens.createSessionToken(id, authority);
 
-        const processor = new EventProcessor(agentId, name, { defaultMode: "everyone" });
-        await processor.connectRoom(room, roomName, "everyone");
+        participants.set(sessionToken, { id, name, authority, channel, sessionToken });
+        idToSession.set(id, sessionToken);
 
-        const agent: ConnectedAgent = {
-          id: agentId,
-          name,
-          processor,
-          tmuxSession: null,
-          tmpDir,
-          running: false,
-          runPromise: null,
-        };
-        agents.set(agentId, agent);
+        const participantList = room.listParticipants().map((p) => ({
+          id: p.id,
+          name: p.name,
+          type: p.type,
+          authority: p.authority ?? "participant",
+        }));
 
-        const mcpUrl = `${publicUrl}/mcp?agent=${agentId}`;
+        logServer(`${name} joined (${authority})`);
 
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ agentId, mcpUrl, tmpDir }));
+        res.end(JSON.stringify({
+          sessionToken,
+          participantId: id,
+          roomName,
+          roomId: room.roomId,
+          participants: participantList,
+          authority,
+        }));
         return;
       }
+
+      // ── All remaining POST endpoints require a session token ────────────
+
+      const sessionToken = String(body.token ?? "");
+      const session = getSession(sessionToken);
 
       // ── POST /message ───────────────────────────────────────────────────
       if (url.pathname === "/message") {
-        const participantId = String(body.participantId ?? "");
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        if (session.authority === "observer") return jsonError(res, 403, "Observers cannot send messages");
         const content = String(body.content ?? "");
         const replyTo = body.replyTo ? String(body.replyTo) : undefined;
+        if (!content) return jsonError(res, 400, "Empty message");
 
-        const human = humans.get(participantId);
-        if (!human) {
-          res.writeHead(403, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Not a human participant or not found" }));
-          return;
-        }
+        const p = participants.get(sessionToken);
+        if (!p) return jsonError(res, 403, "Not a participant");
 
-        if (!content) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Empty message" }));
-          return;
-        }
-
-        await human.channel.sendMessage(content, replyTo);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        const msg = await p.channel.sendMessage(content, replyTo);
+        jsonOk(res, { messageId: msg.id });
         return;
       }
 
-      // ── POST /connect (agent tmux session) ──────────────────────────────
-      if (url.pathname === "/connect") {
-        const agentId = String(body.agentId ?? "");
-        const tmuxSession = String(body.tmuxSession ?? "");
-        const agent = agents.get(agentId);
+      // ── POST /event ─────────────────────────────────────────────────────
+      if (url.pathname === "/event") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        if (session.authority === "observer") return jsonError(res, 403, "Observers cannot emit events");
+        const event = body.event as RoomEvent | undefined;
+        if (!event) return jsonError(res, 400, "Missing event");
 
-        if (!agent) {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Agent not found" }));
-          return;
+        const p = participants.get(sessionToken);
+        if (!p) return jsonError(res, 403, "Not a participant");
+
+        await p.channel.emit(event);
+        jsonOk(res);
+        return;
+      }
+
+      // ── POST /set-mode ──────────────────────────────────────────────────
+      if (url.pathname === "/set-mode") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        const targetId = body.participantId ? String(body.participantId) : session.id;
+        const mode = String(body.mode ?? "");
+        if (!mode) return jsonError(res, 400, "Missing mode");
+
+        // Setting someone else's mode requires admin
+        if (targetId !== session.id && session.authority !== "admin") {
+          return jsonError(res, 403, "Only admins can change other participants' modes");
         }
 
-        agent.tmuxSession = tmuxSession;
-        agent.running = true;
+        // Emit mode_changed activity event
+        const p = participants.get(sessionToken);
+        if (!p) return jsonError(res, 403, "Not a participant");
 
-        agent.runPromise = agent.processor.run(async (parts) => {
-          if (!agent.tmuxSession || !tmuxSessionExists(agent.tmuxSession)) return;
-          const text = contentPartsToString(parts);
-          tmuxInjectText(agent.tmuxSession, `<room-event>\n${text}\n</room-event>`);
-          tmuxSendEnter(agent.tmuxSession);
-        });
+        await p.channel.emit(createEvent<ActivityEvent>({
+          type: "Activity",
+          category: "ACTIVITY",
+          room_id: room.roomId,
+          participant_id: targetId,
+          action: "mode_changed",
+          detail: { mode },
+        }));
+
+        jsonOk(res);
+        return;
+      }
+
+      // ── POST /kick ──────────────────────────────────────────────────────
+      if (url.pathname === "/kick") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        if (session.authority !== "admin") return jsonError(res, 403, "Only admins can kick");
+        const targetId = String(body.participantId ?? "");
+        if (!targetId) return jsonError(res, 400, "Missing participantId");
+
+        // Find and disconnect the target
+        const targetSession = idToSession.get(targetId);
+        if (targetSession) {
+          const target = participants.get(targetSession) ?? observers.get(targetSession);
+          if (target) {
+            await target.channel.disconnect();
+            participants.delete(targetSession);
+            observers.delete(targetSession);
+            idToSession.delete(targetId);
+            tokens.revokeSessionToken(targetSession);
+            // Close SSE connection
+            const sse = sseConnections.get(targetId);
+            if (sse) {
+              sse.end();
+              sseConnections.delete(targetId);
+            }
+            logServer(`kicked ${targetId}`);
+          }
+        }
+
+        jsonOk(res);
+        return;
+      }
+
+      // ── POST /share ─────────────────────────────────────────────────────
+      if (url.pathname === "/share") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        if (session.authority === "observer") return jsonError(res, 403, "Observers cannot create share links");
+
+        const targetAuthority = (body.authority as AuthorityLevel) ?? undefined;
+
+        const links: Record<string, string> = {};
+
+        if (targetAuthority) {
+          // Generate a specific link
+          const token = tokens.generateShareToken(session.authority, targetAuthority);
+          if (!token) return jsonError(res, 403, `Cannot generate ${targetAuthority} link`);
+          links[targetAuthority] = buildShareUrl(publicUrl, token);
+        } else {
+          // Generate all links the caller can create
+          const tiers: AuthorityLevel[] = ["admin", "participant", "observer"];
+          for (const tier of tiers) {
+            const token = tokens.generateShareToken(session.authority, tier);
+            if (token) links[tier] = buildShareUrl(publicUrl, token);
+          }
+        }
 
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ links }));
         return;
       }
 
       // ── POST /disconnect ────────────────────────────────────────────────
       if (url.pathname === "/disconnect") {
-        const id = String(body.agentId ?? body.participantId ?? "");
+        // Accept either session token or legacy participantId/agentId
+        const token = String(body.token ?? "");
+        const legacyId = String(body.participantId ?? body.agentId ?? "");
 
-        const agent = agents.get(id);
-        if (agent) {
-          agent.running = false;
-          await agent.processor.stop();
-          agents.delete(id);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true }));
-          return;
+        let targetToken = token;
+        if (!targetToken && legacyId) {
+          targetToken = idToSession.get(legacyId) ?? "";
         }
 
-        const human = humans.get(id);
-        if (human) {
-          await human.channel.disconnect();
-          humans.delete(id);
-          // Close SSE connection if open
-          const sse = sseConnections.get(id);
-          if (sse) {
-            sse.end();
-            sseConnections.delete(id);
+        if (targetToken) {
+          const p = participants.get(targetToken);
+          if (p) {
+            await p.channel.disconnect();
+            participants.delete(targetToken);
+            idToSession.delete(p.id);
+            tokens.revokeSessionToken(targetToken);
+            const sse = sseConnections.get(p.id);
+            if (sse) { sse.end(); sseConnections.delete(p.id); }
+            logServer(`${p.name} disconnected`);
           }
-          logServer(`${human.name} disconnected`);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true }));
-          return;
-        }
 
-        const guest = guests.get(id);
-        if (guest) {
-          await guest.observer.disconnect();
-          guests.delete(id);
-          const sse = sseConnections.get(id);
-          if (sse) {
-            sse.end();
-            sseConnections.delete(id);
+          const o = observers.get(targetToken);
+          if (o) {
+            await o.channel.disconnect();
+            observers.delete(targetToken);
+            idToSession.delete(o.id);
+            tokens.revokeSessionToken(targetToken);
+            const sse = sseConnections.get(o.id);
+            if (sse) { sse.end(); sseConnections.delete(o.id); }
           }
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true }));
-          return;
         }
 
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        jsonOk(res);
         return;
       }
     }
@@ -492,87 +505,44 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     httpServer.listen(port, "0.0.0.0", () => resolve());
   });
 
-  // Start tunnel if --share (always, regardless of quiet)
+  // Start tunnel if --share
   if (options.share) {
     tunnelProcess = await startTunnel(port);
     if (tunnelProcess) {
       const tunnelUrl = await waitForTunnelUrl(tunnelProcess);
-      if (tunnelUrl) {
-        publicUrl = tunnelUrl;
-      }
+      if (tunnelUrl) publicUrl = tunnelUrl;
     }
   }
 
+  // Generate share tokens on boot
+  const adminToken = tokens.generateShareToken("admin", "admin")!;
+  const participantToken = tokens.generateShareToken("admin", "participant")!;
+
   if (!options.quiet) {
     const version = process.env.npm_package_version ?? "0.3.0";
+    const adminUrl = buildShareUrl(publicUrl, adminToken);
+    const joinUrl = buildShareUrl(publicUrl, participantToken);
 
-    if (options.share && publicUrl !== serverUrl) {
-      console.log(`
+    console.log(`
   stoops v${version}
 
   Room:    ${roomName}
-  Server:  ${serverUrl}
-  Share:   ${publicUrl}
+  Server:  ${serverUrl}${publicUrl !== serverUrl ? `\n  Tunnel:  ${publicUrl}` : ""}
 
-  Join:    stoops join ${publicUrl}
-  Agent:   stoops run claude --room ${roomName} --server ${publicUrl}
+  Admin:   stoops join ${adminUrl}
+  Join:    stoops join ${joinUrl}
+  Agent:   stoops run claude --join ${joinUrl}
 `);
-    } else if (options.share) {
-      console.log(`
-  stoops v${version}
-
-  Room:    ${roomName}
-  Server:  ${serverUrl}
-  Share:   (tunnel failed to start — falling back to local)
-
-  Join:    stoops join ${serverUrl}
-  Agent:   stoops run claude --room ${roomName}
-`);
-    } else {
-      console.log(`
-  stoops v${version}
-
-  Room:    ${roomName}
-  Server:  ${serverUrl}
-
-  Join:    stoops join ${serverUrl}
-  Agent:   stoops run claude --room ${roomName}
-`);
-    }
   }
 
   // ── Graceful shutdown ──────────────────────────────────────────────────
 
   const shutdown = async () => {
     logServer("shutting down...");
-
-    // Kill tunnel
-    if (tunnelProcess) {
-      tunnelProcess.kill();
-      tunnelProcess = null;
-    }
-
-    // Close all SSE connections
-    for (const [id, sse] of sseConnections) {
-      sse.end();
-      sseConnections.delete(id);
-    }
-
-    // Disconnect all agents
-    for (const agent of agents.values()) {
-      await agent.processor.stop();
-    }
-
-    // Disconnect all humans
-    for (const human of humans.values()) {
-      await human.channel.disconnect();
-    }
-
-    // Disconnect all guests
-    for (const guest of guests.values()) {
-      await guest.observer.disconnect();
-    }
-
+    if (tunnelProcess) { tunnelProcess.kill(); tunnelProcess = null; }
+    for (const [id, sse] of sseConnections) { sse.end(); sseConnections.delete(id); }
+    for (const p of participants.values()) { await p.channel.disconnect().catch(() => {}); }
+    for (const o of observers.values()) { await o.channel.disconnect().catch(() => {}); }
     httpServer.close();
     process.exit(0);
   };
@@ -580,7 +550,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  return { serverUrl, publicUrl, roomName };
+  return { serverUrl, publicUrl, roomName, adminToken, participantToken };
 }
 
 // ── Server log ────────────────────────────────────────────────────────────────
@@ -623,15 +593,11 @@ function waitForTunnelUrl(child: ChildProcess, timeoutMs = 15000): Promise<strin
     let buffer = "";
 
     const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve(null);
-      }
+      if (!resolved) { resolved = true; resolve(null); }
     }, timeoutMs);
 
     child.stderr?.on("data", (chunk: Buffer) => {
       buffer += chunk.toString();
-      // Look for the tunnel URL in cloudflared output
       const match = buffer.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
       if (match && !resolved) {
         resolved = true;
@@ -641,11 +607,7 @@ function waitForTunnelUrl(child: ChildProcess, timeoutMs = 15000): Promise<strin
     });
 
     child.on("exit", () => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        resolve(null);
-      }
+      if (!resolved) { resolved = true; clearTimeout(timer); resolve(null); }
     });
   });
 }

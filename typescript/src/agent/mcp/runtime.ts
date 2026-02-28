@@ -1,0 +1,280 @@
+/**
+ * Runtime MCP server — local MCP proxy for the client-side agent runtime.
+ *
+ * Claude Code connects to this local server. Tool calls are routed to the
+ * right stoop server via the RoomResolver (which maps room names to
+ * RemoteRoomDataSource instances).
+ *
+ * Tools:
+ *   Always present:
+ *     stoops__catch_up(room?) — with room: room catch-up. Without: list all rooms.
+ *     stoops__search_by_text(room, query, count?, cursor?)
+ *     stoops__search_by_message(room, ref, direction?, count?)
+ *     stoops__send_message(room, content, reply_to?)
+ *     stoops__set_mode(room, mode)
+ *     stoops__join_room(url, alias?)
+ *     stoops__leave_room(room)
+ *
+ *   With --admin flag:
+ *     stoops__admin__set_mode_for(room, participant, mode)
+ *     stoops__admin__kick(room, participant)
+ */
+
+import { createServer } from "node:http";
+import { z } from "zod";
+import type { RoomResolver, ToolHandlerOptions } from "../types.js";
+import {
+  handleCatchUp,
+  handleSearchByText,
+  handleSearchByMessage,
+  handleSendMessage,
+  textResult,
+  resolveOrError,
+} from "../tool-handlers.js";
+import type { RemoteRoomDataSource } from "../remote-room-data-source.js";
+
+export interface RuntimeMcpServerOptions {
+  resolver: RoomResolver;
+  toolOptions: ToolHandlerOptions;
+  admin?: boolean;
+  /** Called when the agent requests joining a new room mid-session. */
+  onJoinRoom?: (url: string, alias?: string) => Promise<{ success: boolean; error?: string }>;
+  /** Called when the agent requests leaving a room. */
+  onLeaveRoom?: (room: string) => Promise<{ success: boolean; error?: string }>;
+  /** Called when the agent changes its own mode. */
+  onSetMode?: (room: string, mode: string) => Promise<{ success: boolean; error?: string }>;
+  /** Called for admin set-mode-for. */
+  onAdminSetModeFor?: (room: string, participant: string, mode: string) => Promise<{ success: boolean; error?: string }>;
+  /** Called for admin kick. */
+  onAdminKick?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
+}
+
+export interface RuntimeMcpServer {
+  url: string;
+  stop: () => Promise<void>;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
+  const { resolver, toolOptions } = opts;
+
+  // ── stoops__catch_up ────────────────────────────────────────────────────
+  server.tool(
+    "stoops__catch_up",
+    "Catch up on a room. With room: returns participants + unseen events. Without room: lists all connected rooms with your mode and authority in each.",
+    {
+      room: z.string().optional().describe("Room name. Omit to list all connected rooms."),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async ({ room }: { room?: string }) => {
+      if (!room) {
+        // List all rooms
+        const rooms = resolver.listAll();
+        if (rooms.length === 0) {
+          return textResult("Not connected to any rooms.");
+        }
+        const lines = ["Connected rooms:", ""];
+        for (const r of rooms) {
+          const idPart = r.identifier ? ` [${r.identifier}]` : "";
+          lines.push(`  ${r.name}${idPart} — ${r.mode} (${r.participantCount} participants)`);
+          if (r.lastMessage) lines.push(`    Last: ${r.lastMessage}`);
+        }
+        return textResult(lines.join("\n"));
+      }
+      return handleCatchUp(resolver, { room }, toolOptions);
+    },
+  );
+
+  // ── stoops__search_by_text ──────────────────────────────────────────────
+  server.tool(
+    "stoops__search_by_text",
+    "Search chat history by keyword. Returns the most recent matches with context.",
+    {
+      room: z.string().describe("Room name"),
+      query: z.string().describe("Keyword or phrase to search for"),
+      count: z.number().int().min(1).max(10).default(3).optional()
+        .describe("Number of matches (default 3)"),
+      cursor: z.string().optional().describe("Pagination cursor"),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (args: any) => handleSearchByText(resolver, args, toolOptions) as any,
+  );
+
+  // ── stoops__search_by_message ──────────────────────────────────────────
+  server.tool(
+    "stoops__search_by_message",
+    "Show messages around a known message ref. Use to scroll back or forward.",
+    {
+      room: z.string().describe("Room name"),
+      ref: z.string().describe("Message ref (e.g. #3847)"),
+      direction: z.enum(["before", "after"]).default("before").optional()
+        .describe("'before' to scroll back, 'after' to scroll forward"),
+      count: z.number().int().min(1).max(50).default(10).optional()
+        .describe("Number of messages (default 10)"),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (args: any) => handleSearchByMessage(resolver, args, toolOptions) as any,
+  );
+
+  // ── stoops__send_message ────────────────────────────────────────────────
+  server.tool(
+    "stoops__send_message",
+    "Send a message to a room. Only speak when you have something genuinely worth saying.",
+    {
+      room: z.string().describe("Room name"),
+      content: z.string().describe("Message content"),
+      reply_to_id: z.string().optional()
+        .describe("Only set when replying to a specific earlier message adds clarity. Use the #XXXX ref."),
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (args: any) => handleSendMessage(resolver, args, toolOptions) as any,
+  );
+
+  // ── stoops__set_mode ────────────────────────────────────────────────────
+  server.tool(
+    "stoops__set_mode",
+    "Change your engagement mode for a room. Modes: everyone, people, agents, me, standby-everyone, standby-people, standby-agents, standby-me.",
+    {
+      room: z.string().describe("Room name"),
+      mode: z.string().describe("Engagement mode"),
+    },
+    async ({ room, mode }: { room: string; mode: string }) => {
+      if (!opts.onSetMode) return textResult("Mode changes not supported.");
+      const result = await opts.onSetMode(room, mode);
+      return result.success
+        ? textResult(`Mode set to ${mode} for [${room}].`)
+        : textResult(result.error ?? "Failed to set mode.");
+    },
+  );
+
+  // ── stoops__join_room ──────────────────────────────────────────────────
+  server.tool(
+    "stoops__join_room",
+    "Join a new stoop room mid-session. The URL should be a share link provided by a human.",
+    {
+      url: z.string().describe("Share URL to join"),
+      alias: z.string().optional().describe("Local alias for the room (if name collides with an existing room)"),
+    },
+    async ({ url, alias }: { url: string; alias?: string }) => {
+      if (!opts.onJoinRoom) return textResult("Joining rooms not supported.");
+      const result = await opts.onJoinRoom(url, alias);
+      return result.success
+        ? textResult(`Joined room successfully.`)
+        : textResult(result.error ?? "Failed to join room.");
+    },
+  );
+
+  // ── stoops__leave_room ─────────────────────────────────────────────────
+  server.tool(
+    "stoops__leave_room",
+    "Leave a stoop room.",
+    {
+      room: z.string().describe("Room name to leave"),
+    },
+    async ({ room }: { room: string }) => {
+      if (!opts.onLeaveRoom) return textResult("Leaving rooms not supported.");
+      const result = await opts.onLeaveRoom(room);
+      return result.success
+        ? textResult(`Left [${room}].`)
+        : textResult(result.error ?? "Failed to leave room.");
+    },
+  );
+
+  // ── Admin tools (only with --admin flag) ────────────────────────────────
+  if (opts.admin) {
+    server.tool(
+      "stoops__admin__set_mode_for",
+      "Admin: set engagement mode for another participant.",
+      {
+        room: z.string().describe("Room name"),
+        participant: z.string().describe("Participant name"),
+        mode: z.string().describe("Engagement mode to set"),
+      },
+      async ({ room, participant, mode }: { room: string; participant: string; mode: string }) => {
+        if (!opts.onAdminSetModeFor) return textResult("Admin mode changes not supported.");
+        const result = await opts.onAdminSetModeFor(room, participant, mode);
+        return result.success
+          ? textResult(`Set ${participant}'s mode to ${mode} in [${room}].`)
+          : textResult(result.error ?? "Failed to set mode.");
+      },
+    );
+
+    server.tool(
+      "stoops__admin__kick",
+      "Admin: kick a participant from a room.",
+      {
+        room: z.string().describe("Room name"),
+        participant: z.string().describe("Participant name to kick"),
+      },
+      async ({ room, participant }: { room: string; participant: string }) => {
+        if (!opts.onAdminKick) return textResult("Admin kick not supported.");
+        const result = await opts.onAdminKick(room, participant);
+        return result.success
+          ? textResult(`Kicked ${participant} from [${room}].`)
+          : textResult(result.error ?? "Failed to kick participant.");
+      },
+    );
+  }
+}
+
+/**
+ * Create a runtime MCP server on a random localhost port.
+ * Returns the URL for --mcp-config and a stop function.
+ */
+export async function createRuntimeMcpServer(
+  opts: RuntimeMcpServerOptions,
+): Promise<RuntimeMcpServer> {
+  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
+  const { StreamableHTTPServerTransport } = await import(
+    "@modelcontextprotocol/sdk/server/streamableHttp.js"
+  );
+
+  const httpServer = createServer(async (req, res) => {
+    if (req.url !== "/mcp") {
+      res.writeHead(404).end();
+      return;
+    }
+
+    // Fresh McpServer per request (McpServer only allows one active transport)
+    const reqServer = new McpServer({ name: "stoops_runtime", version: "1.0.0" });
+    registerTools(reqServer, opts);
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+
+    await reqServer.connect(transport);
+
+    let body: unknown;
+    if (req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { body = undefined; }
+    }
+
+    await transport.handleRequest(req, res, body);
+  });
+
+  const port = await new Promise<number>((resolve, reject) => {
+    httpServer.listen(0, "127.0.0.1", () => {
+      const addr = httpServer.address();
+      if (addr && typeof addr === "object") resolve(addr.port);
+      else reject(new Error("Could not determine server port"));
+    });
+    httpServer.once("error", reject);
+  });
+
+  const url = `http://127.0.0.1:${port}/mcp`;
+
+  let stopPromise: Promise<void> | null = null;
+  const stop = () => {
+    if (!stopPromise) {
+      stopPromise = new Promise<void>((resolve, reject) =>
+        httpServer.close((err) => (err ? reject(err) : resolve())),
+      );
+    }
+    return stopPromise;
+  };
+
+  return { url, stop };
+}

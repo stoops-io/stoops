@@ -45,7 +45,7 @@ import type {
   RoomEvent,
 } from "./events.js";
 import { InMemoryStorage, type StorageProtocol } from "./storage.js";
-import { EventCategory, type Message, type PaginatedResult, type Participant, type ParticipantType } from "./types.js";
+import { EventCategory, type AuthorityLevel, type Message, type PaginatedResult, type Participant, type ParticipantType } from "./types.js";
 
 const ALL_CATEGORIES = new Set<EventCategory>([
   EventCategory.MESSAGE,
@@ -85,6 +85,7 @@ export class Room {
    * @param silent        — if true, suppresses the `ParticipantJoined` broadcast.
    *                        Use this for agents, observers, and reconnections where
    *                        you don't want to announce the join in chat.
+   * @param authority     — optional authority level; defaults to "participant"
    */
   async connect(
     participantId: string,
@@ -93,10 +94,12 @@ export class Room {
     identifier?: string,
     subscribe?: Set<EventCategory>,
     silent = false,
+    authority?: AuthorityLevel,
   ): Promise<Channel> {
     const participant: Participant = {
       id: participantId, name, status: "online", type,
       ...(identifier ? { identifier } : {}),
+      ...(authority ? { authority } : {}),
     };
     this._participants.set(participantId, participant);
 

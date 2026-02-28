@@ -4,15 +4,16 @@
  * stoops CLI — shared rooms for AI agents.
  *
  * Usage:
- *   stoops [--room <name>] [--port <port>] [--share]    Host a room + join it
+ *   stoops [--room <name>] [--port <port>] [--share]        Host a room + join it
  *   stoops serve [--room <name>] [--port <port>] [--share]  Headless server only
- *   stoops join <url> [--name <name>] [--guest]         Join a room as a human
- *   stoops run claude --room <name> [--name <name>]     Connect Claude Code to a room
+ *   stoops join <url> [--name <name>] [--guest]             Join a room as a human
+ *   stoops run claude --join <url> [--name <name>] [--admin]  Connect Claude Code
  */
 
 import { serve } from "./serve.js";
 import { join } from "./join.js";
 import { runClaude } from "./run-claude.js";
+import { buildShareUrl } from "./auth.js";
 
 const args = process.argv.slice(2);
 
@@ -24,18 +25,36 @@ function getFlag(name: string): string | undefined {
   return value;
 }
 
+/** Collect all values for a repeatable flag (e.g. --join url1 --join url2). */
+function getAllFlags(name: string): string[] {
+  const results: string[] = [];
+  const flag = `--${name}`;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === flag && args[i + 1] && !args[i + 1].startsWith("--")) {
+      results.push(args[i + 1]);
+    }
+  }
+  return results;
+}
+
 async function main(): Promise<void> {
-  // stoops run claude ...
+  // stoops run claude --join <url> [--join <url>] [--name <name>] [--admin]
   if (args[0] === "run" && args[1] === "claude") {
+    const joinUrls = getAllFlags("join");
+    // Backward compat: --room + --server still works
     const room = getFlag("room");
-    if (!room) {
-      console.error("Usage: stoops run claude --room <name> [--name <name>] [--server <url>]");
+    const server = getFlag("server");
+    if (joinUrls.length === 0 && !room) {
+      console.error("Usage: stoops run claude --join <url> [--name <name>] [--admin]");
+      console.error("       stoops run claude --room <name> [--server <url>]  (legacy)");
       process.exit(1);
     }
     await runClaude({
+      joinUrls,
       room,
       name: getFlag("name"),
-      server: getFlag("server"),
+      server,
+      admin: args.includes("--admin"),
     });
     return;
   }
@@ -58,14 +77,14 @@ async function main(): Promise<void> {
   // stoops --help
   if (args.includes("--help") || args.includes("-h")) {
     console.log("Usage:");
-    console.log("  stoops [--room <name>] [--port <port>] [--share]          Host + join");
-    console.log("  stoops serve [--room <name>] [--port <port>] [--share]    Headless server");
-    console.log("  stoops join <url> [--name <name>] [--guest]               Join a room");
-    console.log("  stoops run claude --room <name> [--name <name>]           Connect Claude Code");
+    console.log("  stoops [--room <name>] [--port <port>] [--share]              Host + join");
+    console.log("  stoops serve [--room <name>] [--port <port>] [--share]        Headless server");
+    console.log("  stoops join <url> [--name <name>] [--guest]                   Join a room");
+    console.log("  stoops run claude --join <url> [--name <name>] [--admin]      Connect Claude Code");
     return;
   }
 
-  // stoops serve [--room <name>] [--port <port>] [--share]  — headless server only
+  // stoops serve [--room <name>] [--port <port>] [--share]
   if (args[0] === "serve") {
     const portStr = getFlag("port");
     await serve({
@@ -86,11 +105,17 @@ async function main(): Promise<void> {
       quiet: true,
     });
 
-    // Server is ready — join it locally (tunnel is for other people)
+    // Host joins locally as admin using the admin share token
+    const adminJoinUrl = buildShareUrl(result.serverUrl, result.adminToken);
+    const participantShareUrl = buildShareUrl(
+      result.publicUrl !== result.serverUrl ? result.publicUrl : result.serverUrl,
+      result.participantToken,
+    );
+
     await join({
-      server: result.serverUrl,
+      server: adminJoinUrl,
       name: getFlag("name"),
-      shareUrl: result.publicUrl !== result.serverUrl ? result.publicUrl : undefined,
+      shareUrl: participantShareUrl,
     });
     return;
   }
@@ -102,7 +127,7 @@ async function main(): Promise<void> {
   console.error("  stoops [--room <name>] [--port <port>] [--share]");
   console.error("  stoops serve [--room <name>] [--port <port>] [--share]");
   console.error("  stoops join <url> [--name <name>] [--guest]");
-  console.error("  stoops run claude --room <name> [--name <name>]");
+  console.error("  stoops run claude --join <url> [--name <name>] [--admin]");
   process.exit(1);
 }
 

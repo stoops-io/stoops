@@ -4,6 +4,7 @@ import { describe, test, expect, beforeEach } from "vitest";
 import { Room } from "../src/core/room.js";
 import type { Channel } from "../src/core/channel.js";
 import type { RoomConnection, RoomResolver } from "../src/agent/types.js";
+import { LocalRoomDataSource } from "../src/agent/room-data-source.js";
 import {
   resolveOrError,
   textResult,
@@ -29,7 +30,7 @@ function makeResolver(connections: Map<string, RoomConnection>): RoomResolver {
         name: conn.name,
         roomId,
         mode: "everyone",
-        participantCount: conn.room.listParticipants().length,
+        participantCount: conn.dataSource.listParticipants().length,
       }));
     },
   };
@@ -39,7 +40,8 @@ async function setupRoom(): Promise<{ room: Room; channel: Channel; conn: RoomCo
   const room = new Room("test-room");
   const channel = await room.connect("user1", "Alice", "human");
   await room.connect("stoop1", "Quinn", "agent");
-  const conn: RoomConnection = { room, channel, name: "Kitchen" };
+  const dataSource = new LocalRoomDataSource(room, channel);
+  const conn: RoomConnection = { dataSource, room, channel, name: "Kitchen" };
   return { room, channel, conn };
 }
 

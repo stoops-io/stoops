@@ -11,6 +11,7 @@
 
 import type { Room } from "../core/room.js";
 import type { Channel } from "../core/channel.js";
+import type { RoomDataSource } from "./room-data-source.js";
 
 // ── Content ───────────────────────────────────────────────────────────────────
 
@@ -27,10 +28,14 @@ export type ContentPart =
 // ── Room resolution ───────────────────────────────────────────────────────────
 
 /**
- * A resolved room connection: the room instance, the agent's channel, and the
- * room's display name. Passed to tool handlers so they can read/write the room.
+ * A resolved room connection: the data source, the room's display name,
+ * and optional direct room/channel references for backward compatibility.
+ *
+ * Tool handlers and EventProcessor use `dataSource` for all data access.
+ * Direct `room`/`channel` access is kept for app-path consumers that need it.
  */
 export interface RoomConnection {
+  dataSource: RoomDataSource;
   room: Room;
   channel: Channel;
   name: string;

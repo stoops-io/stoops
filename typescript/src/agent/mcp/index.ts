@@ -1,2 +1,2 @@
 export { type StoopsMcpServer, createFullMcpServer } from "./full.js";
-export { createLiteMcpServer } from "./lite.js";
+export { type RuntimeMcpServer, type RuntimeMcpServerOptions, createRuntimeMcpServer } from "./runtime.js";

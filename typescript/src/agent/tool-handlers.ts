@@ -33,14 +33,14 @@ export async function formatMsgLine(
   conn: RoomConnection,
   mkRef: (id: string) => string,
 ): Promise<string> {
-  const participant = conn.room.listParticipants().find((p) => p.id === msg.sender_id);
+  const participant = conn.dataSource.listParticipants().find((p) => p.id === msg.sender_id);
   const typeLabel = participant?.type ?? "human";
   const ts = formatTimestamp(new Date(msg.timestamp));
   const ref = mkRef(msg.id);
   const imageNote = msg.image_url ? ` [[img:${msg.image_url}]]` : "";
   let line = `[${ts}] ${typeLabel} ${msg.sender_name}: ${msg.content}${imageNote} ${ref}`;
   if (msg.reply_to_id) {
-    const target = await conn.room.getMessage(msg.reply_to_id);
+    const target = await conn.dataSource.getMessage(msg.reply_to_id);
     if (target) {
       const targetRef = mkRef(target.id);
       const q = target.content.slice(0, 40) + (target.content.length > 40 ? "..." : "");
@@ -59,8 +59,7 @@ export async function buildCatchUpLines(
   conn: RoomConnection,
   options: Pick<ToolHandlerOptions, "isEventSeen" | "markEventsSeen" | "assignRef">,
 ): Promise<string[]> {
-  const roomId = conn.room.roomId;
-  const result = await conn.room.storage.getEvents(roomId, null, 50, null);
+  const result = await conn.dataSource.getEvents(null, 50, null);
   const chronological = [...result.items].reverse();
 
   let startIdx = chronological.length;
@@ -83,7 +82,7 @@ export async function buildCatchUpLines(
     if (event.type === "MessageSent") {
       lines.push(await formatMsgLine(event.message, conn, mkRef));
     } else if (event.type === "ParticipantJoined") {
-      const participant = conn.room.listParticipants().find((p) => p.id === event.participant_id);
+      const participant = conn.dataSource.listParticipants().find((p) => p.id === event.participant_id);
       const typeLabel = participant?.type ?? "human";
       const name = participant?.name ?? event.participant_id;
       lines.push(`[${ts}] ${typeLabel} ${name} joined the chat`);
@@ -93,10 +92,10 @@ export async function buildCatchUpLines(
       const name = snapshot?.name ?? event.participant_id;
       lines.push(`[${ts}] ${typeLabel} ${name} left the chat`);
     } else if (event.type === "ReactionAdded") {
-      const participant = conn.room.listParticipants().find((p) => p.id === event.participant_id);
+      const participant = conn.dataSource.listParticipants().find((p) => p.id === event.participant_id);
       const typeLabel = participant?.type ?? "human";
       const name = participant?.name ?? event.participant_id;
-      const target = await conn.room.getMessage(event.message_id);
+      const target = await conn.dataSource.getMessage(event.message_id);
       const targetRef = target ? ` to ${mkRef(target.id)}` : "";
       lines.push(`[${ts}] ${typeLabel} ${name} reacted ${event.emoji}${targetRef}`);
     }
@@ -134,12 +133,11 @@ export async function handleSearchByText(
   const r = resolveOrError(resolver, args.room);
   if (r.error) return r.result;
   const { conn } = r;
-  const roomId = conn.room.roomId;
   const count = args.count ?? 3;
   const mkRef = (id: string) => `(#${options.assignRef?.(id) ?? messageRef(id)})`;
 
   // Get up to 50 matches to know the total; slice to count for display
-  const searchResult = await conn.room.searchMessages(args.query, 50, args.cursor ?? null);
+  const searchResult = await conn.dataSource.searchMessages(args.query, 50, args.cursor ?? null);
   const totalVisible = searchResult.items.length;
 
   if (totalVisible === 0) {
@@ -149,7 +147,7 @@ export async function handleSearchByText(
   const toShow = searchResult.items.slice(0, count); // newest-first
 
   // Load recent messages for context (before/after lookup)
-  const recentResult = await conn.room.storage.getMessages(roomId, 100, null);
+  const recentResult = await conn.dataSource.getMessages(100, null);
   const recentChron = [...recentResult.items].reverse(); // chronological
   const msgIdxMap = new Map<string, number>();
   recentChron.forEach((m, i) => msgIdxMap.set(m.id, i));
@@ -217,7 +215,6 @@ export async function handleSearchByMessage(
   const r = resolveOrError(resolver, args.room);
   if (r.error) return r.result;
   const { conn } = r;
-  const roomId = conn.room.roomId;
   const direction = args.direction ?? "before";
   const count = args.count ?? 10;
   const mkRef = (id: string) => `(#${options.assignRef?.(id) ?? messageRef(id)})`;
@@ -225,11 +222,11 @@ export async function handleSearchByMessage(
   // Resolve ref to message ID
   const rawRef = args.ref.startsWith("#") ? args.ref.slice(1) : args.ref;
   const anchorId = options.resolveRef?.(rawRef) ?? rawRef;
-  const anchor = await conn.room.getMessage(anchorId);
+  const anchor = await conn.dataSource.getMessage(anchorId);
   if (!anchor) return textResult(`Message ${args.ref} not found.`);
 
   // Load recent messages for "after" direction and "newer count"
-  const recentResult = await conn.room.storage.getMessages(roomId, 100, null);
+  const recentResult = await conn.dataSource.getMessages(100, null);
   const recentChron = [...recentResult.items].reverse(); // chronological
   const anchorIdx = recentChron.findIndex((m) => m.id === anchor.id);
 
@@ -238,7 +235,7 @@ export async function handleSearchByMessage(
 
   if (direction === "before") {
     // Get count messages before anchor from storage (works for any age)
-    const beforeResult = await conn.room.storage.getMessages(roomId, count, anchor.id);
+    const beforeResult = await conn.dataSource.getMessages(count, anchor.id);
     const beforeMessages = [...beforeResult.items].reverse(); // chronological
     displayMessages = [...beforeMessages, anchor];
     newerCount = anchorIdx >= 0 ? recentChron.length - anchorIdx - 1 : 100; // 100+ if too old
@@ -286,7 +283,6 @@ export async function handleSendMessage(
 ): Promise<ToolResult> {
   const r = resolveOrError(resolver, args.room);
   if (r.error) return r.result;
-  const { channel } = r.conn;
 
   const image = args.image_url
     ? {
@@ -302,7 +298,7 @@ export async function handleSendMessage(
     const rawRef = replyToId.startsWith("#") ? replyToId.slice(1) : replyToId;
     replyToId = options.resolveRef?.(rawRef) ?? replyToId;
   }
-  const message = await channel.sendMessage(args.content, replyToId, image);
+  const message = await r.conn.dataSource.sendMessage(args.content, replyToId, image);
 
   const ref = options.assignRef?.(message.id) ?? messageRef(message.id);
   return textResult(`Message sent (#${ref}).`);

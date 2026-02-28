@@ -2,6 +2,7 @@
 
 import type { Room } from "../core/room.js";
 import type { Channel } from "../core/channel.js";
+import type { RoomDataSource } from "./room-data-source.js";
 import type { RoomConnection } from "./types.js";
 
 export interface InternalConnection extends RoomConnection {
@@ -59,7 +60,7 @@ export class ConnectionRegistry {
       roomId,
       ...(conn.identifier ? { identifier: conn.identifier } : {}),
       mode: getModeForRoom(roomId),
-      participantCount: conn.room.listParticipants().length,
+      participantCount: conn.dataSource.listParticipants().length,
       ...(this._lastMessages.has(roomId) ? { lastMessage: this._lastMessages.get(roomId) } : {}),
     }));
   }

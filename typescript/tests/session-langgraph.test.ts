@@ -76,11 +76,9 @@ describe("MCP server", () => {
     await mcp.stop();
   });
 
-  test("createLiteMcpServer starts and returns url + instance", async () => {
-    const { createLiteMcpServer } = await import("../src/agent/mcp/lite.js");
+  test("createRuntimeMcpServer starts and returns url", async () => {
+    const { createRuntimeMcpServer } = await import("../src/agent/mcp/runtime.js");
     const { Room } = await import("../src/core/room.js");
-    const { mkdtempSync } = await import("node:fs");
-    const { tmpdir } = await import("node:os");
     const room = new Room("test");
     const channel = await room.connect("user1", "Alice");
     const resolver = {
@@ -88,10 +86,8 @@ describe("MCP server", () => {
       listAll: () => [],
     };
 
-    const snapshotDir = mkdtempSync(`${tmpdir()}/stoops_test_`);
-    const mcp = await createLiteMcpServer(resolver, {}, snapshotDir);
+    const mcp = await createRuntimeMcpServer({ resolver, toolOptions: {} });
     expect(mcp.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
-    expect(mcp.instance).toBeDefined();
     expect(typeof mcp.stop).toBe("function");
     await mcp.stop();
   });

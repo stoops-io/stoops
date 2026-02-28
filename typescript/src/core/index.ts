@@ -1,6 +1,6 @@
 /** stoops/core — Chat server with typed events and channels. */
 
-export { EventCategory, MessageSchema, type Message, type Participant, type PaginatedResult } from "./types.js";
+export { EventCategory, MessageSchema, type AuthorityLevel, type Message, type Participant, type PaginatedResult } from "./types.js";
 export {
   type RoomEvent,
   type MessageSentEvent,

@@ -49,7 +49,8 @@ export type DisplayEvent =
   | { id: string; ts: string; kind: "message"; senderName: string; senderType: "human" | "agent"; isSelf: boolean; content: string; replyToName?: string }
   | { id: string; ts: string; kind: "join";    name: string; participantType: "human" | "agent" }
   | { id: string; ts: string; kind: "leave";   name: string; participantType: "human" | "agent" }
-  | { id: string; ts: string; kind: "mode";    mode: string };
+  | { id: string; ts: string; kind: "mode";    mode: string }
+  | { id: string; ts: string; kind: "system";  content: string };
 
 export interface TUIHandle {
   push(event: DisplayEvent): void;
@@ -166,6 +167,17 @@ function EventLine({
         {ts}
         <Text color={C.dim}>{"mode → "}</Text>
         <Text color={C.yellow} bold>{event.mode}</Text>
+      </Box>
+    );
+  }
+
+  // ── System message (slash command output) ──
+  if (event.kind === "system") {
+    return (
+      <Box paddingX={1}>
+        {ts}
+        <Text color={C.dim}>{"  "}</Text>
+        <Text color={C.secondary}>{event.content}</Text>
       </Box>
     );
   }
