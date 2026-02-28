@@ -12,7 +12,7 @@
 
 import { serve } from "./serve.js";
 import { join } from "./join.js";
-import { runClaude } from "./run-claude.js";
+import { runClaude } from "./claude/run.js";
 import { buildShareUrl } from "./auth.js";
 
 const args = process.argv.slice(2);

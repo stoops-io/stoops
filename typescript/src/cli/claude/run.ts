@@ -25,21 +25,18 @@ import {
   tmuxAvailable,
   tmuxCreateSession,
   tmuxSendCommand,
-  tmuxInjectText,
-  tmuxSendEnter,
   tmuxAttach,
   tmuxKillSession,
   tmuxSessionExists,
-} from "./tmux.js";
-import { randomName } from "../core/names.js";
-import { extractToken } from "./auth.js";
-import { RemoteRoomDataSource } from "../agent/remote-room-data-source.js";
-import { SseMultiplexer } from "../agent/sse-multiplexer.js";
-import { EventProcessor } from "../agent/event-processor.js";
-import { contentPartsToString } from "../agent/prompts.js";
-import { createRuntimeMcpServer, type RuntimeMcpServer } from "../agent/mcp/runtime.js";
-import type { ContentPart } from "../agent/types.js";
-import type { Participant } from "../core/types.js";
+} from "../tmux.js";
+import { randomName } from "../../core/names.js";
+import { extractToken } from "../auth.js";
+import { RemoteRoomDataSource } from "../../agent/remote-room-data-source.js";
+import { SseMultiplexer } from "../../agent/sse-multiplexer.js";
+import { EventProcessor } from "../../agent/event-processor.js";
+import { createRuntimeMcpServer, type RuntimeMcpServer } from "../../agent/mcp/runtime.js";
+import type { Participant } from "../../core/types.js";
+import { TmuxBridge } from "./tmux-bridge.js";
 
 export interface RunClaudeOptions {
   /** URLs to join (repeatable, each may contain a share token). */
@@ -368,15 +365,9 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
   // Launch claude with MCP config pointing at local runtime server
   tmuxSendCommand(tmuxSession, `claude --mcp-config ${mcpConfigPath}`);
 
-  // ── Start EventProcessor with SSE source + tmux delivery ───────────────
+  // ── Create TmuxBridge for state-aware event injection ──────────────────
 
-  const tmuxDeliver = async (parts: ContentPart[]) => {
-    const text = contentPartsToString(parts);
-    if (!text.trim()) return;
-    // Inject event text wrapped in XML tags so Claude Code can parse it
-    tmuxInjectText(tmuxSession, `<room-event>\n${text}\n</room-event>`);
-    tmuxSendEnter(tmuxSession);
-  };
+  const bridge = new TmuxBridge(tmuxSession);
 
   // Update participant caches as SSE events arrive
   // We do this by listening to the SSE multiplexer's events in the EventProcessor.
@@ -385,7 +376,7 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
   // We'll do this via a wrapper that intercepts participant events.
 
   // Create a wrapper around the SSE multiplexer that also updates participant caches
-  const wrappedSource: AsyncIterable<import("../agent/multiplexer.js").LabeledEvent> = {
+  const wrappedSource: AsyncIterable<import("../../agent/multiplexer.js").LabeledEvent> = {
     [Symbol.asyncIterator]() {
       const inner = sseMux[Symbol.asyncIterator]();
       return {
@@ -410,11 +401,11 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
   };
 
   // Start the event loop in the background
-  const eventLoopPromise = processor.run(tmuxDeliver, wrappedSource);
+  const eventLoopPromise = processor.run(bridge.deliver.bind(bridge), wrappedSource);
 
   // ── Wait for Claude Code to be ready, then attach ───────────────────────
 
-  await new Promise((r) => setTimeout(r, 2000));
+  await bridge.waitForReady();
 
   console.log("Attaching to Claude Code session...\n");
 
@@ -426,7 +417,8 @@ export async function runClaude(options: RunClaudeOptions): Promise<void> {
 
   // ── Cleanup ─────────────────────────────────────────────────────────────
 
-  // Stop event processor and SSE
+  // Stop bridge, event processor, and SSE
+  bridge.stop();
   await processor.stop();
   sseMux.close();
 

@@ -63,6 +63,27 @@ export function tmuxAttach(session: string): void {
   }
 }
 
+/** Capture visible screen content as array of lines. */
+export function tmuxCapturePane(session: string): string[] {
+  try {
+    const output = execFileSync("tmux", ["capture-pane", "-t", session, "-p"], {
+      encoding: "utf-8",
+    });
+    return output.split("\n");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Send a control key sequence (e.g. "C-u", "C-y", "Escape").
+ * Unlike tmuxInjectText, this does NOT use -l, so tmux interprets
+ * the key name rather than treating it as literal text.
+ */
+export function tmuxSendKey(session: string, key: string): void {
+  execFileSync("tmux", ["send-keys", "-t", session, key]);
+}
+
 /** Kill a tmux session. */
 export function tmuxKillSession(session: string): void {
   try {

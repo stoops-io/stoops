@@ -15,6 +15,7 @@ stoops/
 │   │   ├── claude/      # Claude Agent SDK consumer
 │   │   ├── langgraph/   # LangGraph consumer
 │   │   └── cli/         # CLI commands (stoops, stoops run claude)
+│   │       └── claude/  # Claude Code agent runtime (TmuxBridge, run command)
 │   ├── tests/
 │   ├── package.json
 │   └── tsconfig.json
@@ -100,7 +101,7 @@ npx stoops run claude --join <url> [--name <name>] [--admin]            # connec
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (229 passing)
+cd typescript && npm test          # run tests (249 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```
@@ -362,6 +363,7 @@ What's built, what works, what's planned. **Always update this section after imp
 - `ref-map.test.ts` — 8 tests: assignment idempotency, resolution, collision handling, clear/reset
 - `session-langgraph.test.ts` — 4 tests (1 skipped): module exports, session creation, MCP server
 - `session-claude.test.ts` — 4 tests: module exports, session creation, temp directory, SDK loading
+- `tmux-bridge.test.ts` — 20 tests: state detection heuristics for idle, typing, dialog (single-select, multi-select, plan approval, review/submit), permission, streaming, unknown, and priority ordering
 
 ---
 
@@ -451,17 +453,32 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Ctrl+C handling** — ink's default exit disabled; custom `useInput` handler calls `onCtrlC`
 - **No resize handler** — removed to prevent Ink `<Static>` cursor miscalculation and screen corruption on terminal resize; divider width updates naturally on next state change
 
-#### `stoops run claude` command (`run-claude.ts`)
+#### `stoops run claude` command (`cli/claude/run.ts`)
 
 - **Client-side agent runtime** — full EventProcessor running locally; SSE connections to remote servers; local MCP proxy for Claude Code
-- **Flow**: join servers → create RemoteRoomDataSource per room → create SseMultiplexer → create EventProcessor with `connectRemoteRoom()` → create runtime MCP server → write MCP config file → launch `claude --mcp-config` in tmux → start `EventProcessor.run(tmuxDeliver, wrappedSource)` → block on tmux attach → cleanup
+- **Flow**: join servers → create RemoteRoomDataSource per room → create SseMultiplexer → create EventProcessor with `connectRemoteRoom()` → create runtime MCP server → write MCP config file → launch `claude --mcp-config` in tmux → create TmuxBridge → start `EventProcessor.run(bridge.deliver, wrappedSource)` → wait for Claude Code readiness → block on tmux attach → cleanup
 - **Supports `--join <url>` (repeatable)** — join multiple rooms across multiple servers
 - **Supports `--admin`** — adds admin MCP tools (`stoops__admin__set_mode_for`, `stoops__admin__kick`)
 - **SSE participant tracking** — wraps the SseMultiplexer to intercept ParticipantJoined/Left events and update RemoteRoomDataSource participant caches
-- **tmux delivery** — `contentPartsToString(parts)` → `tmuxInjectText()` wrapped in `<room-event>` XML tags → `tmuxSendEnter()`
+- **TmuxBridge delivery** — replaces raw `tmuxInjectText`/`tmuxSendEnter` with state-aware injection via `TmuxBridge.deliver()`; events wrapped in `<room-event>` XML tags
 - **MCP config file** — written to temp directory; passed to `claude --mcp-config <path>`; cleaned up on exit
 - **Runtime MCP callbacks** — `onSetMode` sets mode locally + `POST /set-mode` to server; `onJoinRoom` joins new room mid-session (new RemoteRoomDataSource + SSE connection + EventProcessor registration); `onLeaveRoom` disconnects from room; `onAdminSetModeFor` and `onAdminKick` routed to server
-- **Cleanup** — stops EventProcessor, closes SseMultiplexer, stops MCP server, `POST /disconnect` to all servers, kills tmux session, removes temp directory
+- **Cleanup** — stops TmuxBridge, EventProcessor, SseMultiplexer, MCP server; `POST /disconnect` to all servers; kills tmux session; removes temp directory
+
+#### TmuxBridge (`cli/claude/tmux-bridge.ts`)
+
+- **State-aware event injection** — reads Claude Code's TUI screen via `tmux capture-pane`, detects UI state, applies the right injection strategy
+- **6 TUI states detected** — `idle` (inject now), `typing` (Ctrl+U/inject/Ctrl+Y), `dialog` (queue), `permission` (queue), `streaming` (queue), `unknown` (queue — safe default)
+- **`detectStateFromLines(lines)`** — pure function for heuristic state detection; checks last ~15 lines of screen for known patterns:
+  - Dialog: `"Enter to select"`, `"Esc to cancel"`, `"Ready to code?"`, `"Review your answers"`, `"ctrl+g to edit in"`
+  - Permission: `"(Y)"`, `"Allow "`, `"Deny "`
+  - Streaming: spinner characters `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`
+  - Idle/typing: prompt char `❯`/`›` with `❯❯`/`››` footer
+- **`deliver(parts)`** — drop-in replacement for EventProcessor's deliver callback; converts ContentPart[] to text, wraps in XML tags, injects via state-appropriate strategy
+- **`injectWhileTyping(text)`** — Ctrl+U (cuts user's input to kill ring) → inject event + Enter → Ctrl+Y (restores user's text); user sees a brief flicker at worst
+- **Event queue** — events that can't be injected (dialog, permission, streaming, unknown states) are queued; a polling timer (200ms) drains them one-at-a-time when the state becomes safe
+- **`waitForReady(timeoutMs?)`** — polls `capture-pane` for the `❯` prompt; replaces the old hardcoded 2-second delay with actual readiness detection (default 30s timeout)
+- **Design doc** — full exploration of alternatives and rationale at `docs/claude-code-tmux-bridge.md`
 
 #### tmux helpers (`tmux.ts`)
 
@@ -471,12 +488,16 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - `tmuxSendCommand(session, command)` — type a command + press Enter
 - `tmuxInjectText(session, text)` — inject literal text (no Enter); uses `execFileSync` to avoid shell injection
 - `tmuxSendEnter(session)` — send Enter key
+- `tmuxCapturePane(session)` — capture visible screen content as array of lines
+- `tmuxSendKey(session, key)` — send a control key sequence (e.g. `C-u`, `C-y`, `Escape`); no `-l` flag so tmux interprets key names
 - `tmuxAttach(session)` — blocking attach (supports nested tmux via `switch-client`)
 - `tmuxKillSession(session)` — kill session (safe if already dead)
 
 #### Agent event delivery
 
-- Events flow: Stoop Server → SSE → SseMultiplexer → EventProcessor (engagement classify → buffer/trigger) → `tmux send-keys` injection (client-side)
+- Events flow: Stoop Server → SSE → SseMultiplexer → EventProcessor (engagement classify → buffer/trigger) → TmuxBridge (state detection → inject/queue) → Claude Code
+- TmuxBridge reads screen via `capture-pane` before each injection to detect TUI state
+- Safe injection: idle → direct inject; user typing → Ctrl+U/inject/Ctrl+Y; unsafe states → queue and poll
 - Injected as `<room-event>...</room-event>` XML-tagged text
 - Content events buffered and flushed with next trigger (same as app path)
 - EventProcessor runs client-side — engagement, buffering, formatting all local
@@ -503,7 +524,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 
 - **Multiplexer teardown** — does `run()` exit cleanly when all rooms disconnect, or does it hang on the merged async iterator?
 - **RefMap overflow** — when the map overflows between compactions, should we force a context compaction? SDK may not expose a direct `compact()` call.
-- **tmux input collision** — user typing + event arriving simultaneously; XML tags should make events unambiguous but needs real testing.
-- **Claude Code readiness** — after `tmux send-keys 'claude' Enter`, how long until Claude Code is ready to receive injected events? Need a delay or readiness check before the first injection.
+- **~~tmux input collision~~** — resolved: TmuxBridge detects TUI state via `capture-pane` and applies state-appropriate injection (Ctrl+U/Ctrl+Y for user typing, queue for dialogs/streaming).
+- **~~Claude Code readiness~~** — resolved: TmuxBridge.waitForReady() polls `capture-pane` for the `❯` prompt instead of using a hardcoded delay.
 - **Images in tool results** — `[[img:URL]]` text markers still used in MCP tool output; native vision blocks only work in real-time event injection, not in catch_up/search results.
 - **Engagement mode count** — 8 modes internally, but the v3 UX design exposes 4 active modes + standby as an orthogonal toggle. Should the internal model simplify to match, or keep 8 for power users?
