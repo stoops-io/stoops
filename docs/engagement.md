@@ -111,7 +111,7 @@ Buffer is cleared on delivery and on context compaction.
 
 ## The event queue
 
-If a trigger event arrives while the agent is already processing (LLM is mid-evaluation), it goes into a queue. When the current evaluation completes, all queued events are drained as a single "While you were responding, this happened:" batch.
+If a trigger event arrives while the agent is already processing (LLM is mid-evaluation), it goes into a queue. When the current evaluation completes, all queued events are drained as a batch.
 
 This prevents concurrent LLM calls while ensuring no events are lost.
 

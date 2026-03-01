@@ -106,7 +106,7 @@ npx stoops run opencode --join <url> [--name <name>] [--admin] [-- <args>]      
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (249 passing)
+cd typescript && npm test          # run tests (247 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```
@@ -252,25 +252,25 @@ What's built, what works, what's planned. **Always update this section after imp
 
 #### EventProcessor
 
-- **Core event loop** — one processor = one agent = N room connections; delivery is pluggable via `run(deliver, eventSource?)` callback
+- **Core event loop** — one processor = one agent = N room connections; delivery is pluggable via `run(deliver, eventSource?, initialParts?)` callback
 - **Implements `RoomResolver`** — resolves room names/identifiers/IDs to live connections
 - **Internal delegation** — `ConnectionRegistry` (room connections, name/identifier lookup), `ContentBuffer` (per-room buffering), `EventTracker` (dedup + delivery tracking) extracted as focused internal classes; EventProcessor delegates to them while keeping its public API unchanged
 - **Event flow**: event source (EventMultiplexer or SseMultiplexer) → `_handleLabeledEvent()` → engagement classify → trigger/content/drop → `deliver(parts)`
-- **Injectable event source** — `run(deliver, eventSource?)` accepts an optional external `AsyncIterable<LabeledEvent>` (e.g. `SseMultiplexer`); if provided, iterates that instead of the internal `EventMultiplexer`; used by the client-side agent runtime
+- **Injectable event source** — `run(deliver, eventSource?, initialParts?)` accepts an optional external `AsyncIterable<LabeledEvent>` (e.g. `SseMultiplexer`); if provided, iterates that instead of the internal `EventMultiplexer`; used by the client-side agent runtime
+- **Initial parts** — optional `initialParts` parameter on `run()` delivers content before entering the event loop; used by the CLI runtime to deliver auto-join confirmation
 - **Remote room connections** — `connectRemoteRoom(dataSource, roomName, mode?, identifier?)` registers a room via a `RoomDataSource` (no local Room/Channel); paired with `disconnectRemoteRoom(roomId)` for cleanup
 - **Content buffer** — per-room `BufferedContent[]`; content events accumulate between triggers; flushed alongside the next trigger
-- **Event queue** — events arriving during delivery are queued; drained as "While you were responding, this happened: ..." batch after delivery completes; LangGraph consumer also supports mid-loop injection via `drainInjectBuffer()` (events seen during tool calls included in the next LLM round)
+- **Event queue** — events arriving during delivery are queued; drained as a batch after delivery completes; LangGraph consumer also supports mid-loop injection via `drainInjectBuffer()` (events seen during tool calls included in the next LLM round)
 - **Processing lock** — `_processing` boolean prevents concurrent deliveries
 - **Seen-event cache** — `EventTracker._deliveredIds` tracks event IDs the consumer has seen; exposed via `isEventSeen()` / `markEventsSeen()` for MCP tools; clears on compaction and stop
 - **Event ID deduplication** — `EventTracker._processedIds` tracks raw event UUIDs at entry; prevents duplicate delivery; self-clears at 500 entries; resets on `stop()`
 - **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs; LCG generator `(n × 6337) % 10000` for non-sequential refs; exposed via `assignRef()` / `resolveRef()` for MCP tools
 - **Inline mode labels** — non-`everyone` rooms show mode in brackets: `[lobby — people]`; `everyone` rooms carry no annotation
-- **Startup full catch-up** — on `run()`, `buildFullCatchUp()` lists every room with mode, participants, and unseen event lines; injected as the first delivery; re-injected post-compaction via `_needsFullCatchUp`
-- **Hot connect/disconnect** — rooms can be added/removed while running; on connect, agent receives "You've been added to [Room Name]" notification; notifications queued during delivery are drained after
+- **Hot connect/disconnect** — rooms can be added/removed while running via `connectRoom()` / `connectRemoteRoom()` / `disconnectRoom()` / `disconnectRemoteRoom()`
 - **Silent connect/disconnect** — `Room.connect(…, silent: true)` and `channel.disconnect(silent: true)` suppress join/leave events
 - **Mode changes** — `setModeForRoom()` / `getModeForRoom()` delegate to the engagement strategy; emit `ActivityEvent` with `action: "mode_changed"`
 - **Initial mode broadcast** — `connectRoom()` emits the initial mode-changed event to the room channel
-- **Consumer hooks** — `onContextCompacted()` clears caches and schedules catch-up rebuild; `emitToolUse()` routes `ToolUseEvent` to the triggering room; `currentContextRoomId` getter for stats attribution
+- **Consumer hooks** — `onContextCompacted()` clears seen-event cache and ref map; `emitToolUse()` routes `ToolUseEvent` to the triggering room; `currentContextRoomId` getter for stats attribution
 - **preQuery hook** — called before each delivery; return false to abort (used for credit caps)
 
 #### MCP Servers
@@ -279,12 +279,13 @@ What's built, what works, what's planned. **Always update this section after imp
 - **Runtime MCP server** (`createRuntimeMcpServer()`) — for CLI agent runtime; local proxy that routes tool calls to remote stoop servers via HTTP; returns `{ url, stop }`
 - **Runtime tools** (always present): `stoops__catch_up(room?)`, `stoops__search_by_text(room, query)`, `stoops__search_by_message(room, ref)`, `stoops__send_message(room, content)`, `stoops__set_mode(room, mode)`, `stoops__join_room(url, alias?)`, `stoops__leave_room(room)`
 - **Runtime admin tools** (with `--admin` flag): `stoops__admin__set_mode_for(room, participant, mode)`, `stoops__admin__kick(room, participant)`
+- **Rich `join_room` response** — returns onboarding with identity, mode + description, person, participant list, and recent activity via `buildCatchUpLines()`; `MODE_DESCRIPTIONS` map provides one-liner mode explanations
 - **Callback-based routing** — runtime MCP server accepts `onJoinRoom`, `onLeaveRoom`, `onSetMode`, `onAdminSetModeFor`, `onAdminKick` callbacks; the agent runtime wires these to HTTP calls to the right stoop server
 
 #### Tool Handlers
 
 - **Pure functions** — `handleCatchUp`, `handleSearchByText`, `handleSearchByMessage`, `handleSendMessage`; take a `RoomResolver` and options, return structured results
-- **`buildCatchUpLines()`** — builds catch-up snapshot from unseen events; used by both the MCP tool and the runtime's startup injection
+- **`buildCatchUpLines()`** — builds catch-up snapshot from unseen events; used by MCP tools and `join_room` response
 - **`resolveOrError()`** — room name resolution with error fallback message
 - **`formatMsgLine()`** — formats a single message as a transcript line with refs, replies, and image markers
 - **`ToolHandlerOptions`** — shared type for tool handler and MCP server option parameters; extracted from `ProcessorBridge`
@@ -318,19 +319,19 @@ What's built, what works, what's planned. **Always update this section after imp
 
 #### Prompts
 
-- **`SYSTEM_PREAMBLE`** — shared protocol instructions for all agents: event format, reply format, @mention format, memory model ("no persistent memory between sessions"), person relationship ("their messages carry more weight"), all 8 engagement modes with behavioral semantics; `everyone` mode instructs agents to respond independently (don't defer because another agent already answered)
-- **Selective reply threading** — `send_message` tool description coaches restraint: "only thread when it adds clarity in busy multi-person conversations; DMs and conversational back-and-forth should use fresh messages"
-- **`getSystemPreamble(identifier?, personParticipantId?)`** — prepends an identity block if the agent has an identifier or person
-- **`formatEvent()`** — converts a typed `RoomEvent` into `ContentPart[]` for the LLM; returns `null` for noise events (ToolUse, Activity, ReactionRemoved)
-  - Messages: `"[HH:MM:SS] [Room] [human] Name: content (#XXXX)"` with 4-digit decimal ref
-  - Replies: `"[human] Name (→ Other: "quoted..."): reply (#XXXX)"` with sender name and truncated content resolved via `getMessage()`
+- **`SYSTEM_PREAMBLE`** — shared protocol instructions for app-path agents; CLI agents learn the protocol progressively through tool descriptions and `join_room` responses instead
+- **`MODE_DESCRIPTIONS`** — one-liner descriptions for each engagement mode used in `join_room` responses and `set_mode` tool; e.g. `"people": "Human messages are pushed to you. Agent messages are delivered as context."`
+- **`getSystemPreamble(identifier?, personParticipantId?)`** — prepends an identity block if the agent has an identifier or person; used by app-path consumers
+- **`formatEvent()`** — converts a typed `RoomEvent` into compact one-liner `ContentPart[]`; returns `null` for noise events (ToolUse, Activity, ReactionRemoved, ContextCompacted)
+  - Messages: `"[14:23:01] #3847 [lobby] Alice: hey everyone"` — ref before room, no type labels
+  - Replies: `"[14:23:01] #9102 [lobby] Alice (→ #3847 Bob): good point"` — ref-based, no quoted content
+  - Multiline: continuation lines prefixed with `[room]` aligned under content start
   - Images: native `{ type: "image", url }` ContentPart alongside text
-  - Mentions: `"⚡ [Room] [human] Name mentioned you: content"`
-  - Reactions: `"[human] Name reacted ❤️ to your message "quoted...""` or `"to Other's "quoted...""` with target message context
-  - Joins/leaves: `"[human] Name joined/left the chat"`
-  - Compaction: `"[agent] Name's memory was refreshed"`
-- **Image-aware agent context** — image messages surfaced as native vision content blocks (`{ type: "image", url }`) in real-time events; tool outputs (`catch_up`, `search`) embed image URLs inline as `[[img:URL]]` text markers (vision blocks not supported in tool results yet)
-- **`participantLabel()`** — `"human Name"` for humans, `"agent Name"` for agents
+  - Mentions: `"[14:23:01] #5521 [lobby] ⚡ Alice: @bot what do you think?"`
+  - Reactions: `"[14:23:01] [lobby] Alice reacted ❤️ to #3847"` — ref-based target
+  - Joins: `"[14:23:01] [lobby] + Alice joined"`
+  - Leaves: `"[14:23:15] [lobby] - Alice left"`
+- **Image-aware agent context** — image messages surfaced as native vision content blocks (`{ type: "image", url }`) in real-time events; tool outputs (`catch_up`, `search`) embed image URLs inline as `[[img:URL]]` text markers
 - **`contentPartsToString()`** — flattens `ContentPart[]` back to plain text (for trace logs)
 
 ---
@@ -365,10 +366,10 @@ What's built, what works, what's planned. **Always update this section after imp
 
 ### Tests
 
-- `event-processor.test.ts` — 55 tests: room connections, dedup, mode management, catch-up building, content buffering, processing lock, hot-connect, RoomResolver, compaction, ref map
+- `event-processor.test.ts` — 51 tests: room connections, dedup, mode management, catch-up building, content buffering, processing lock, RoomResolver, compaction, ref map
 - `engagement.test.ts` — 59 tests: 52 `classifyEvent()` covering all modes and edge cases + 7 `StoopsEngagement` class tests
 - `room.test.ts` — 39 tests: connect/disconnect, message sending, @mention detection, observer behavior, pagination, event broadcasting
-- `format-event.test.ts` — 30 tests: all 12 event types, reply context, reactions, images, room labels, refs, null returns
+- `format-event.test.ts` — 29 tests: compact one-liner format, reply context, reactions, images, room labels, refs, null returns
 - `tool-handlers.test.ts` — 18 tests: room resolution, message formatting, catch-up building, search by text, search by message (before/after, ref resolution, unknown anchor)
 - `multiplexer.test.ts` — 12 tests: channel add/remove, close, interleaving, labeled events
 - `ref-map.test.ts` — 8 tests: assignment idempotency, resolution, collision handling, clear/reset
@@ -469,21 +470,22 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 
 #### Shared runtime setup (`cli/runtime-setup.ts`)
 
-- **`setupAgentRuntime(options)`** — agent-agnostic setup shared by `run claude` and `run opencode`; returns `AgentRuntimeSetup` with processor, SSE mux, MCP server, wrapped source, and cleanup function
-- **Flow**: generate agent name → parse join targets from `--join` URLs or legacy `--room`/`--server` → join each target via `POST /join` → build `JoinResult[]` → create `SseMultiplexer` → create `EventProcessor` with `connectRemoteRoom()` per room → create `RuntimeMcpServer` with callbacks → wrap SSE source to intercept participant events for cache updates → return setup
+- **`setupAgentRuntime(options)`** — agent-agnostic setup shared by `run claude` and `run opencode`; returns `AgentRuntimeSetup` with processor, SSE mux, MCP server, wrapped source, initialParts, and cleanup function
+- **Flow**: generate agent name → parse join targets from `--join` URLs → join each target via `POST /join` → build `JoinResult[]` → create `SseMultiplexer` → create `EventProcessor` with `connectRemoteRoom()` per room → create `RuntimeMcpServer` with callbacks → wrap SSE source to intercept participant events for cache updates → build auto-join startup message → return setup
 - **`AgentRuntimeOptions`** — `joinUrls`, `room`, `name`, `server`, `admin`, `extraArgs` (passthrough args after `--`)
 - **`JoinResult`** — per-room join state: serverUrl, sessionToken, participantId, roomName, roomId, authority, participants, dataSource
-- **`AgentRuntimeSetup`** — returned by setup: agentName, participantId, joinResults (mutable), processor, sseMux, mcpServer, wrappedSource, cleanup()
-- **Runtime MCP callbacks** — `onSetMode` sets mode locally + `POST /set-mode` to server; `onJoinRoom` joins new room mid-session (new RemoteRoomDataSource + SSE connection + EventProcessor registration); `onLeaveRoom` disconnects from room; `onAdminSetModeFor` and `onAdminKick` routed to server
+- **`AgentRuntimeSetup`** — returned by setup: agentName, participantId, joinResults (mutable), initialParts, processor, sseMux, mcpServer, wrappedSource, cleanup()
+- **Auto-join startup message** — if rooms were auto-joined via `--join`, builds a minimal one-liner: `"Auto-joined lobby (people mode, 3 participants)."` passed as `initialParts` to `processor.run()`
+- **Runtime MCP callbacks** — `onSetMode` sets mode locally + `POST /set-mode` to server; `onJoinRoom` joins new room mid-session (new RemoteRoomDataSource + SSE connection + EventProcessor registration) and returns rich onboarding response (identity, mode, person, participants, recent activity); `onLeaveRoom` disconnects from room; `onAdminSetModeFor` and `onAdminKick` routed to server
 - **SSE participant tracking** — wraps the SseMultiplexer to intercept ParticipantJoined/Left events and update RemoteRoomDataSource participant caches
 - **Cleanup** — stops EventProcessor, SseMultiplexer, MCP server; `POST /disconnect` to all servers
 
 #### `stoops run claude` command (`cli/claude/run.ts`)
 
 - **Claude Code agent runtime** — thin wrapper over `setupAgentRuntime()` adding tmux-specific delivery
-- **Flow**: check `tmuxAvailable()` → `setupAgentRuntime(options)` → write MCP config file → create tmux session → launch `claude --mcp-config <path> <extraArgs>` → create TmuxBridge → `processor.run(bridge.deliver, wrappedSource)` → wait for readiness → tmux attach → cleanup
+- **Flow**: check `tmuxAvailable()` → `setupAgentRuntime(options)` → write MCP config file → create tmux session → launch `claude --mcp-config <path> <extraArgs>` → create TmuxBridge → `processor.run(bridge.deliver, wrappedSource, initialParts)` → tmux attach → cleanup
 - **Passthrough args** — everything after `--` forwarded to the `claude` command (e.g. `-- --model sonnet`)
-- **TmuxBridge delivery** — state-aware injection via `TmuxBridge.deliver()`; events wrapped in `<room-event>` XML tags
+- **TmuxBridge delivery** — state-aware injection via `TmuxBridge.deliver()`; events delivered as plain text (no XML wrapping)
 - **MCP config file** — written to temp directory; passed to `claude --mcp-config <path>`; cleaned up on exit
 - **Cleanup** — stops TmuxBridge, `setup.cleanup()`, kills tmux session, removes temp directory
 
@@ -496,7 +498,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
   - Permission: `"(Y)"`, `"Allow "`, `"Deny "`
   - Streaming: spinner characters `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`
   - Idle/typing: prompt char `❯`/`›` with `❯❯`/`››` footer
-- **`deliver(parts)`** — drop-in replacement for EventProcessor's deliver callback; converts ContentPart[] to text, wraps in XML tags, injects via state-appropriate strategy
+- **`deliver(parts)`** — drop-in replacement for EventProcessor's deliver callback; converts ContentPart[] to text, injects via state-appropriate strategy
 - **`injectWhileTyping(text)`** — Ctrl+U (cuts user's input to kill ring) → inject event + Enter → Ctrl+Y (restores user's text); user sees a brief flicker at worst
 - **Event queue** — events that can't be injected (dialog, permission, streaming, unknown states) are queued; a polling timer (200ms) drains them one-at-a-time when the state becomes safe
 - **`waitForReady(timeoutMs?)`** — polls `capture-pane` for the `❯` prompt; replaces the old hardcoded 2-second delay with actual readiness detection (default 30s timeout)
@@ -505,9 +507,9 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 #### `stoops run opencode` command (`cli/opencode/run.ts`)
 
 - **OpenCode agent runtime** — thin wrapper over `setupAgentRuntime()` using OpenCode's HTTP API for delivery; no tmux needed
-- **Flow**: `setupAgentRuntime(options)` → pick random port (14096-15095) → spawn `opencode serve --port <port> <extraArgs>` with `OPENCODE_CONFIG_CONTENT` env to inject stoops MCP → poll `/session/status` until ready (30s timeout) → `POST /session` to create session → build deliver callback → `processor.run(deliver, wrappedSource)` → block until child exits or Ctrl+C → cleanup
+- **Flow**: `setupAgentRuntime(options)` → pick random port (14096-15095) → spawn `opencode serve --port <port> <extraArgs>` with `OPENCODE_CONFIG_CONTENT` env to inject stoops MCP → poll `/session/status` until ready (30s timeout) → `POST /session` to create session → build deliver callback → `processor.run(deliver, wrappedSource, initialParts)` → block until child exits or Ctrl+C → cleanup
 - **`OPENCODE_CONFIG_CONTENT` env** — injects stoops MCP server config at launch: `{"mcp":{"stoops":{"type":"remote","url":"<mcp-url>","oauth":false}}}`; no temp files, no cleanup needed
-- **Deliver callback** — `POST /session/:id/message` with `{ parts: [{ type: "text", text: "<room-event>...</room-event>" }], system: systemPreamble }`; synchronous (blocks until LLM finishes) to preserve EventProcessor's processing lock; includes `getSystemPreamble()` on every delivery for protocol awareness across compactions
+- **Deliver callback** — `POST /session/:id/message` with `{ parts: [{ type: "text", text }] }`; synchronous (blocks until LLM finishes) to preserve EventProcessor's processing lock; no system preamble — agent learns the protocol progressively through tool descriptions and `join_room` responses
 - **Passthrough args** — everything after `--` forwarded to the `opencode serve` command (e.g. `-- --model gpt-4o`)
 - **No tmux** — pure HTTP API integration; user can optionally watch via `opencode attach http://127.0.0.1:<port>`
 - **Cleanup** — kills child process, `setup.cleanup()`
@@ -534,8 +536,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **OpenCode delivery**: deliver → `POST /session/:id/message` → OpenCode via HTTP API
   - Synchronous POST (blocks until LLM finishes) preserves processing lock semantics
   - OpenCode handles internal queuing if busy — no client-side state detection needed
-  - System preamble included on every delivery for compaction resilience
-- Injected as `<room-event>...</room-event>` XML-tagged text (both paths)
+- Events delivered as plain text — compact one-liners, no XML wrapping (both paths)
 - Content events buffered and flushed with next trigger (same as app path)
 - EventProcessor runs client-side — engagement, buffering, formatting all local
 

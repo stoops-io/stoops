@@ -1,10 +1,24 @@
-/** Event formatting, mode reminders, and system preamble for stoops agents. */
+/** Event formatting and mode descriptions for stoops agents. */
 
 import type { Participant } from "../core/types.js";
 import type { RoomEvent } from "../core/events.js";
 import type { ContentPart } from "./types.js";
 
-// ── System preamble ───────────────────────────────────────────────────────────
+// ── Mode descriptions ────────────────────────────────────────────────────────
+
+/** One-liner mode descriptions used in join_room responses and set_mode. */
+export const MODE_DESCRIPTIONS: Record<string, string> = {
+  "everyone": "All messages are pushed to you.",
+  "people": "Human messages are pushed to you. Agent messages are delivered as context.",
+  "agents": "Agent messages are pushed to you. Human messages are delivered as context.",
+  "me": "Only your person's messages are pushed to you. Others are delivered as context.",
+  "standby-everyone": "Only @mentions are pushed to you.",
+  "standby-people": "Only human @mentions are pushed to you.",
+  "standby-agents": "Only agent @mentions are pushed to you.",
+  "standby-me": "Only your person's @mentions are pushed to you.",
+};
+
+// ── System preamble ──────────────────────────────────────────────────────────
 
 const SYSTEM_PREAMBLE = `You are a participant in group chats. You may be connected to multiple rooms at once — events from all of them flow to you, labeled with the room name.
 
@@ -39,12 +53,6 @@ Each room has a mode controlling when you evaluate and respond:
 
 Non-everyone rooms show the mode in the room label (e.g., "[Design Room — people]").`;
 
-/**
- * Build the system preamble for an agent.
- *
- * Prepends an identity block if the agent has an identifier or person.
- * The caller (app layer) appends the agent's personality after this.
- */
 export function getSystemPreamble(identifier?: string, personParticipantId?: string): string {
   const lines: string[] = [];
   if (identifier) lines.push(`Your identifier: @${identifier}`);
@@ -61,11 +69,15 @@ export function messageRef(messageId: string): string {
   return messageId.replace(/-/g, "").slice(0, 4);
 }
 
-
 /** Format a participant as a labeled name: "[human] Alice" or "[agent] Quinn". */
 export function participantLabel(p: Participant | null, fallback?: string): string {
   if (!p) return fallback ?? "someone";
   return `[${p.type}] ${p.name}`;
+}
+
+/** Resolve participant name, with fallback. */
+function resolveName(resolveParticipant: (id: string) => Participant | null, id: string, fallback?: string): string {
+  return resolveParticipant(id)?.name ?? fallback ?? "someone";
 }
 
 /** Format a Date as UTC HH:MM:SS for display in agent transcripts. */
@@ -79,14 +91,29 @@ export function contentPartsToString(parts: ContentPart[]): string {
 }
 
 /**
+ * Format multiline content with room label continuation.
+ * First line is returned as-is. Subsequent lines get [room] prefix aligned.
+ */
+function formatMultilineContent(content: string, roomLabel: string | undefined, prefix: string): string {
+  const lines = content.split("\n");
+  if (lines.length <= 1) return content;
+  const continuation = roomLabel ? `[${roomLabel}] ` : "";
+  // Pad continuation to align under the content start
+  const pad = " ".repeat(prefix.length);
+  return lines[0] + "\n" + lines.slice(1).map(l => `${pad}${continuation}${l}`).join("\n");
+}
+
+/**
  * Format a typed event as ContentPart[] for the LLM session.
  * Returns null for events that shouldn't be sent to the LLM (noise).
  *
- * When roomLabel is provided, all output is prefixed with [roomLabel].
- * Omit roomLabel for single-room agents (backward compatible).
- *
- * When assignRef is provided, messages get runtime-managed 4-digit decimal refs
- * (#3847) instead of the static hex refs. Pass (id) => runtime.assignRef(id).
+ * Compact one-liner format:
+ *   Messages:  [14:23:01] #3847 [lobby] Alice: hey everyone
+ *   Replies:   [14:23:01] #9102 [lobby] Alice (→ #3847 Bob): good point
+ *   Mentions:  [14:23:01] #5521 [lobby] ⚡ Alice: @bot what do you think?
+ *   Joined:    [14:23:01] [lobby] + Alice joined
+ *   Left:      [14:23:15] [lobby] - Bob left
+ *   Reactions:  [14:23:20] [lobby] Alice reacted ❤️ to #3847
  */
 export function formatEvent(
   event: RoomEvent,
@@ -96,21 +123,22 @@ export function formatEvent(
   reactionTarget?: { senderName: string; content: string; isSelf: boolean } | null,
   assignRef?: (messageId: string) => string,
 ): ContentPart[] | null {
-  const p = roomLabel ? `[${roomLabel}] ` : "";
-  const ts = `[${formatTimestamp("timestamp" in event ? (event.timestamp as Date) : new Date())}] `;
-  const mkRef = (id: string) => `(#${assignRef ? assignRef(id) : messageRef(id)})`;
+  const r = roomLabel ? `[${roomLabel}] ` : "";
+  const ts = `[${formatTimestamp("timestamp" in event ? new Date(event.timestamp as Date) : new Date())}] `;
+  const mkRef = (id: string) => `#${assignRef ? assignRef(id) : messageRef(id)}`;
 
   switch (event.type) {
     case "MessageSent": {
       const msg = event.message;
-      const label = participantLabel(resolveParticipant(msg.sender_id), msg.sender_name);
-      const ref = ` ${mkRef(msg.id)}`;
+      const name = resolveName(resolveParticipant, msg.sender_id, msg.sender_name);
+      const ref = mkRef(msg.id);
+      const linePrefix = `${ts}${ref} ${r}`;
       let text: string;
       if (msg.reply_to_id && replyContext) {
-        const q = replyContext.content.length > 60 ? replyContext.content.slice(0, 57) + "..." : replyContext.content;
-        text = `${ts}${p}${label} (→ ${replyContext.senderName}: "${q}"): ${msg.content}${ref}`;
+        const rRef = assignRef ? mkRef(msg.reply_to_id) : ref;
+        text = `${linePrefix}${name} (→ ${rRef} ${replyContext.senderName}): ${formatMultilineContent(msg.content, roomLabel, `${linePrefix}${name} (→ ${rRef} ${replyContext.senderName}): `)}`;
       } else {
-        text = `${ts}${p}${label}: ${msg.content}${ref}`;
+        text = `${linePrefix}${name}: ${formatMultilineContent(msg.content, roomLabel, `${linePrefix}${name}: `)}`;
       }
       const parts: ContentPart[] = [{ type: "text", text }];
       if (msg.image_url) parts.push({ type: "image", url: msg.image_url });
@@ -118,9 +146,10 @@ export function formatEvent(
     }
     case "Mentioned": {
       const msg = event.message;
-      const label = participantLabel(resolveParticipant(msg.sender_id), msg.sender_name);
-      const ref = ` ${mkRef(msg.id)}`;
-      const text = `${ts}⚡ ${p}${label} mentioned you: ${msg.content}${ref}`;
+      const name = resolveName(resolveParticipant, msg.sender_id, msg.sender_name);
+      const ref = mkRef(msg.id);
+      const linePrefix = `${ts}${ref} ${r}⚡ `;
+      const text = `${linePrefix}${name}: ${formatMultilineContent(msg.content, roomLabel, `${linePrefix}${name}: `)}`;
       const parts: ContentPart[] = [{ type: "text", text }];
       if (msg.image_url) parts.push({ type: "image", url: msg.image_url });
       return parts;
@@ -130,32 +159,22 @@ export function formatEvent(
     case "Activity":
       return null;
     case "ReactionAdded": {
-      const label = participantLabel(resolveParticipant(event.participant_id), event.participant_id);
-      if (reactionTarget) {
-        const q = reactionTarget.content.length > 40
-          ? reactionTarget.content.slice(0, 37) + "..."
-          : reactionTarget.content;
-        if (reactionTarget.isSelf) {
-          return [{ type: "text", text: `${ts}${p}${label} reacted ${event.emoji} to your message "${q}"` }];
-        }
-        return [{ type: "text", text: `${ts}${p}${label} reacted ${event.emoji} to ${reactionTarget.senderName}'s "${q}"` }];
-      }
-      return [{ type: "text", text: `${ts}${p}${label} reacted ${event.emoji}` }];
+      const name = resolveName(resolveParticipant, event.participant_id);
+      const targetRef = reactionTarget ? ` to ${mkRef(event.message_id)}` : "";
+      return [{ type: "text", text: `${ts}${r}${name} reacted ${event.emoji}${targetRef}` }];
     }
     case "ReactionRemoved":
       return null;
     case "ParticipantJoined": {
-      // Use event.participant directly — it carries the full Participant including type
-      return [{ type: "text", text: `${ts}${p}${participantLabel(event.participant)} joined the chat` }];
+      const name = event.participant?.name ?? "someone";
+      return [{ type: "text", text: `${ts}${r}+ ${name} joined` }];
     }
     case "ParticipantLeft": {
-      const label = participantLabel(event.participant);
-      return [{ type: "text", text: `${ts}${p}${label} left the chat` }];
+      const name = event.participant?.name ?? "someone";
+      return [{ type: "text", text: `${ts}${r}- ${name} left` }];
     }
-    case "ContextCompacted": {
-      const label = participantLabel(event.participant);
-      return [{ type: "text", text: `${ts}${p}${label}'s memory was refreshed` }];
-    }
+    case "ContextCompacted":
+      return null;
     default:
       return null;
   }

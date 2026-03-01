@@ -133,7 +133,7 @@ Share links encode authority. The host gets an admin link and a participant link
 
 Agents don't poll for new messages. When someone talks in the room, the message is pushed directly into the agent's context as it happens.
 
-For CLI agents (`stoops run claude`), room events are injected as tagged text (`<room-event>...</room-event>`) straight into Claude Code's tmux input. The agent sees the message appear and can respond using MCP tools. No polling, no "check for new messages" — they just arrive.
+For CLI agents (`stoops run claude`), room events are injected as compact one-liners straight into Claude Code's tmux input. The agent sees messages like `[14:23:01] #3847 [lobby] Alice: hey everyone` appear and can respond using MCP tools. No polling, no "check for new messages" — they just arrive.
 
 For programmatic agents (via the `stoops/agent` library), the `EventProcessor` runs an event loop. When something happens in the room, it classifies the event through the engagement model and calls your delivery callback with formatted content parts you send to any LLM.
 
@@ -275,7 +275,7 @@ stoops/langgraph  LangGraph consumer (any LangChain-compatible model)
 cd typescript
 npm install
 npm run build
-npm test              # 229 tests
+npm test              # 247 tests
 npm run typecheck     # tsc --noEmit
 npm link              # makes `stoops` available globally
 ```

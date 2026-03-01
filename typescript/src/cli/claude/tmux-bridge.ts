@@ -83,8 +83,7 @@ export class TmuxBridge {
     const text = contentPartsToString(parts);
     if (!text.trim()) return;
 
-    const wrapped = `<room-event>\n${text}\n</room-event>`;
-    this.inject(wrapped);
+    this.inject(text);
   }
 
   /**
@@ -192,25 +191,6 @@ export class TmuxBridge {
     // else: still blocked, keep polling
   }
 
-  /**
-   * Wait for Claude Code to be ready (prompt visible).
-   * Replaces the hardcoded 2-second delay.
-   */
-  async waitForReady(timeoutMs = 30_000): Promise<void> {
-    const start = Date.now();
-    const pollMs = 500;
-
-    while (Date.now() - start < timeoutMs) {
-      const state = this.detectState();
-      if (state === "idle") return;
-
-      await new Promise((r) => setTimeout(r, pollMs));
-    }
-
-    // Timeout — fall through and hope for the best (same as the old 2s delay)
-    console.warn("Warning: Claude Code readiness timeout — proceeding anyway.");
-  }
-
   /** Cleanup. */
   stop(): void {
     this.stopped = true;
@@ -230,6 +210,14 @@ export class TmuxBridge {
 /**
  * Detect TUI state from capture-pane output lines.
  * Exported separately so it can be unit-tested without tmux.
+ *
+ * Claude Code's TUI layout (v2.1+):
+ *   ────────────────────────
+ *   ❯ <user input here>
+ *   ────────────────────────
+ *   PR #2         /ide ...
+ *
+ * The ❯ prompt sits between separator lines (─). No ❯❯ footer in v2.1+.
  */
 export function detectStateFromLines(lines: string[]): TuiState {
   if (lines.length === 0) return "unknown";
@@ -254,33 +242,40 @@ export function detectStateFromLines(lines: string[]): TuiState {
     if (lastFew.includes(ch)) return "streaming";
   }
 
-  // 4. Look for the prompt line (❯ or ›) and footer (❯❯)
-  //    Work backwards from the bottom to find these
+  // 4. Look for the ❯/› prompt line near the bottom.
+  //    Supports both old layout (❯❯ footer) and new layout (separator lines).
   const promptChar = /^[❯›](\s|$)/;
   const footerChar = /^[❯›]{2}\s/;
+  const separatorLine = /^[─━─\-]{10,}/;
 
-  let hasFooter = false;
-  let promptLine: string | null = null;
-
+  // Strategy A: old layout — find ❯❯ footer then ❯ prompt above it
   for (let i = tail.length - 1; i >= 0; i--) {
     const line = tail[i].trimStart();
-
-    if (!hasFooter && footerChar.test(line)) {
-      hasFooter = true;
-      continue;
-    }
-
-    if (hasFooter && promptChar.test(line)) {
-      promptLine = line;
+    if (footerChar.test(line)) {
+      // Found old-style footer, look for prompt above
+      for (let j = i - 1; j >= 0; j--) {
+        const above = tail[j].trimStart();
+        if (promptChar.test(above)) {
+          const content = above.replace(/^[❯›]\s*/, "").trim();
+          return content.length === 0 ? "idle" : "typing";
+        }
+      }
       break;
     }
   }
 
-  if (promptLine !== null) {
-    // Strip the prompt character and check if there's content
-    const content = promptLine.replace(/^[❯›]\s*/, "").trim();
-    if (content.length === 0) return "idle";
-    return "typing";
+  // Strategy B: new layout — find ❯ prompt between/near separator lines
+  for (let i = tail.length - 1; i >= 0; i--) {
+    const line = tail[i].trimStart();
+    if (promptChar.test(line)) {
+      // Verify it's Claude's prompt by checking for separator line nearby
+      const above = i > 0 ? tail[i - 1].trimStart() : "";
+      const below = i < tail.length - 1 ? tail[i + 1].trimStart() : "";
+      if (separatorLine.test(above) || separatorLine.test(below)) {
+        const content = line.replace(/^[❯›]\s*/, "").trim();
+        return content.length === 0 ? "idle" : "typing";
+      }
+    }
   }
 
   return "unknown";

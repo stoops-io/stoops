@@ -40,7 +40,7 @@ function getAllFlags(name: string, arr: string[] = args): string[] {
 }
 
 async function main(): Promise<void> {
-  // stoops run <runtime> --join <url> [--join <url>] [--name <name>] [--admin] [-- <extra-args>]
+  // stoops run <runtime> --join <url> [--invite <url>] [--name <name>] [--admin] [-- <extra-args>]
   if (args[0] === "run" && (args[1] === "claude" || args[1] === "opencode")) {
     const runtime = args[1];
     const restArgs = args.slice(2);
@@ -51,15 +51,11 @@ async function main(): Promise<void> {
     const extraArgs = ddIndex >= 0 ? restArgs.slice(ddIndex + 1) : [];
 
     const joinUrls = getAllFlags("join", stoopsArgs);
-    // Backward compat: --room + --server still works
     const room = getFlag("room", stoopsArgs);
     const server = getFlag("server", stoopsArgs);
 
     if (joinUrls.length === 0 && !room) {
       console.error(`Usage: stoops run ${runtime} --join <url> [--name <name>] [--admin] [-- <${runtime}-args>]`);
-      if (runtime === "claude") {
-        console.error(`       stoops run claude --room <name> [--server <url>]  (legacy)`);
-      }
       process.exit(1);
     }
 

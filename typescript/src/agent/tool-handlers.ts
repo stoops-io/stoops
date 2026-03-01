@@ -33,18 +33,15 @@ export async function formatMsgLine(
   conn: RoomConnection,
   mkRef: (id: string) => string,
 ): Promise<string> {
-  const participant = conn.dataSource.listParticipants().find((p) => p.id === msg.sender_id);
-  const typeLabel = participant?.type ?? "human";
   const ts = formatTimestamp(new Date(msg.timestamp));
   const ref = mkRef(msg.id);
   const imageNote = msg.image_url ? ` [[img:${msg.image_url}]]` : "";
-  let line = `[${ts}] ${typeLabel} ${msg.sender_name}: ${msg.content}${imageNote} ${ref}`;
+  let line = `[${ts}] ${ref} ${msg.sender_name}: ${msg.content}${imageNote}`;
   if (msg.reply_to_id) {
     const target = await conn.dataSource.getMessage(msg.reply_to_id);
     if (target) {
       const targetRef = mkRef(target.id);
-      const q = target.content.slice(0, 40) + (target.content.length > 40 ? "..." : "");
-      line = `[${ts}] ${typeLabel} ${msg.sender_name} (→ ${targetRef} ${target.sender_name}: "${q}"): ${msg.content}${imageNote} ${ref}`;
+      line = `[${ts}] ${ref} ${msg.sender_name} (→ ${targetRef} ${target.sender_name}): ${msg.content}${imageNote}`;
     }
   }
   return line;
@@ -73,31 +70,27 @@ export async function buildCatchUpLines(
 
   const lines: string[] = [];
   const seenIds: string[] = [];
-  const mkRef = (id: string) => `(#${options.assignRef?.(id) ?? messageRef(id)})`;
+  const mkRef = (id: string) => `#${options.assignRef?.(id) ?? messageRef(id)}`;
 
   for (const event of unseen) {
     seenIds.push(event.id);
     const ts = formatTimestamp(new Date(event.timestamp));
 
     if (event.type === "MessageSent") {
-      lines.push(await formatMsgLine(event.message, conn, mkRef));
+      lines.push(await formatMsgLine(event.message, conn, (id) => mkRef(id)));
     } else if (event.type === "ParticipantJoined") {
       const participant = conn.dataSource.listParticipants().find((p) => p.id === event.participant_id);
-      const typeLabel = participant?.type ?? "human";
       const name = participant?.name ?? event.participant_id;
-      lines.push(`[${ts}] ${typeLabel} ${name} joined the chat`);
+      lines.push(`[${ts}] + ${name} joined`);
     } else if (event.type === "ParticipantLeft") {
-      const snapshot = event.participant;
-      const typeLabel = snapshot?.type ?? "human";
-      const name = snapshot?.name ?? event.participant_id;
-      lines.push(`[${ts}] ${typeLabel} ${name} left the chat`);
+      const name = event.participant?.name ?? event.participant_id;
+      lines.push(`[${ts}] - ${name} left`);
     } else if (event.type === "ReactionAdded") {
       const participant = conn.dataSource.listParticipants().find((p) => p.id === event.participant_id);
-      const typeLabel = participant?.type ?? "human";
       const name = participant?.name ?? event.participant_id;
       const target = await conn.dataSource.getMessage(event.message_id);
       const targetRef = target ? ` to ${mkRef(target.id)}` : "";
-      lines.push(`[${ts}] ${typeLabel} ${name} reacted ${event.emoji}${targetRef}`);
+      lines.push(`[${ts}] ${name} reacted ${event.emoji}${targetRef}`);
     }
     // Other event types (ToolUse, Activity, Mentioned, etc.) are skipped
   }
@@ -134,7 +127,7 @@ export async function handleSearchByText(
   if (r.error) return r.result;
   const { conn } = r;
   const count = args.count ?? 3;
-  const mkRef = (id: string) => `(#${options.assignRef?.(id) ?? messageRef(id)})`;
+  const mkRef = (id: string) => `#${options.assignRef?.(id) ?? messageRef(id)}`;
 
   // Get up to 50 matches to know the total; slice to count for display
   const searchResult = await conn.dataSource.searchMessages(args.query, 50, args.cursor ?? null);
@@ -217,7 +210,7 @@ export async function handleSearchByMessage(
   const { conn } = r;
   const direction = args.direction ?? "before";
   const count = args.count ?? 10;
-  const mkRef = (id: string) => `(#${options.assignRef?.(id) ?? messageRef(id)})`;
+  const mkRef = (id: string) => `#${options.assignRef?.(id) ?? messageRef(id)}`;
 
   // Resolve ref to message ID
   const rawRef = args.ref.startsWith("#") ? args.ref.slice(1) : args.ref;
@@ -301,5 +294,5 @@ export async function handleSendMessage(
   const message = await r.conn.dataSource.sendMessage(args.content, replyToId, image);
 
   const ref = options.assignRef?.(message.id) ?? messageRef(message.id);
-  return textResult(`Message sent (#${ref}).`);
+  return textResult(`Message sent #${ref}.`);
 }

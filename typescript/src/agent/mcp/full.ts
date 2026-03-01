@@ -39,7 +39,7 @@ export interface StoopsMcpServer {
 function registerTools(server: any, resolver: RoomResolver, options: ToolHandlerOptions): void {
   server.tool(
     "catch_up",
-    "Catch up on recent activity in a room. Returns unseen events, oldest first.",
+    "Catch up on recent activity in a room. Returns unseen events.",
     { room: z.string().describe("Name of the room to catch up on") },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async ({ room }: { room: string }) => handleCatchUp(resolver, { room }, options) as any,
@@ -47,7 +47,7 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
 
   server.tool(
     "search_by_text",
-    "Search chat history by keyword. Returns the most recent matches, each shown with 1 message of context before and after.",
+    "Search chat history by keyword.",
     {
       room: z.string().describe("Name of the room to search"),
       query: z.string().describe("Keyword or phrase to search for"),
@@ -61,7 +61,7 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
 
   server.tool(
     "search_by_message",
-    "Show messages around a known message ref. Use to scroll back ('before') or forward ('after') from a message you've seen.",
+    "Show messages around a known message ref.",
     {
       room: z.string().describe("Name of the room"),
       ref: z.string().describe("The #XXXX message ref (e.g. #3847)"),
@@ -76,12 +76,12 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
 
   server.tool(
     "send_message",
-    "Send a message to a specific room. Only use this when you have something genuinely worth saying — a reaction, an answer, a question, a joke. Most of the time, staying quiet is the right call. Not every message needs a response.",
+    "Send a message to a room.",
     {
       room: z.string().describe("Name of the room to send to"),
       content: z.string().describe("Message content"),
       reply_to_id: z.string().optional()
-        .describe("Only set this when replying to a specific earlier message adds clarity. Use the #XXXX ref shown in catch_up or search results."),
+        .describe("Message ref to reply to (e.g. #3847)."),
       image_url: z.string().url().optional().describe("URL of an image to attach"),
       image_mime_type: z.string().optional().describe("MIME type of the image"),
       image_size_bytes: z.number().int().positive().optional()

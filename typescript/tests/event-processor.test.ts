@@ -523,89 +523,13 @@ describe("processing lock", () => {
     await runPromise;
   });
 
-  test("pending notifications queued during processing are delivered after", async () => {
-    // When _processing is true, mode change notifications are queued in
-    // _pendingNotifications and delivered after the current delivery completes.
-    const proc = makeProcessor();
-    const room = makeRoom();
-    const humanCh = await addHuman(room, "human-1", "Alice");
-
-    await proc.connectRoom(room, "lobby");
-
-    let deliveryCount = 0;
-    const deliveries: ContentPart[][] = [];
-    let resolveDelivery: (() => void) | null = null;
-    let deliveryBlocked: (() => void) | null = null;
-
-    const deliver = async (parts: ContentPart[]) => {
-      deliveryCount++;
-      deliveries.push(parts);
-      if (deliveryCount === 2) {
-        deliveryBlocked?.();
-        await new Promise<void>((resolve) => {
-          resolveDelivery = resolve;
-        });
-      }
-    };
-
-    const runPromise = proc.run(deliver);
-    await tick(50);
-
-    const blockedPromise = new Promise<void>((resolve) => {
-      deliveryBlocked = resolve;
-    });
-
-    await humanCh.sendMessage("first");
-    await blockedPromise;
-
-    // Change mode while delivery is blocked — notification goes to _pendingNotifications
-    proc.setModeForRoom(room.roomId, "standby-me");
-    await tick(30);
-
-    // Release the blocked delivery
-    resolveDelivery?.();
-    await tick(200);
-
-    // The mode change notification should have been delivered after the message
-    const allText = deliveries.map(textOf).join("|||");
-    expect(allText).toContain("mode changed");
-    expect(allText).toContain("standby-me");
-
-    await proc.stop();
-    await runPromise;
-  });
+  // (pending notifications removed — mode changes no longer push text to agent)
 });
 
-// ── 7. Hot-connect notifications ────────────────────────────────────────────
+// ── 7. Hot-connect (notifications removed) ──────────────────────────────────
 
-describe("hot-connect notifications", () => {
-  test("connecting a room while running sends a notification", async () => {
-    const proc = makeProcessor();
-    const room1 = makeRoom("room-1");
-    await proc.connectRoom(room1, "lobby");
-
-    const collector = makeDeliveryCollector();
-    const runPromise = proc.run(collector.deliver);
-    await tick(50);
-    const catchUpCount = collector.deliveries.length;
-
-    // Hot-connect a second room while the loop is running
-    const room2 = makeRoom("room-2");
-    await proc.connectRoom(room2, "lounge");
-    await tick(100);
-
-    // Should have received a notification about the new room
-    const postConnect = collector.deliveries.slice(catchUpCount);
-    expect(postConnect.length).toBeGreaterThan(0);
-    const text = postConnect.map(textOf).join("\n");
-    expect(text).toContain("lounge");
-    expect(text).toContain("added");
-
-    await proc.stop();
-    await runPromise;
-  });
-
-  test("connecting a room before run() does NOT send a hot notification", async () => {
+describe("hot-connect", () => {
+  test("connecting a room before run() does not produce startup delivery", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
     await proc.connectRoom(room, "lobby");
@@ -614,11 +538,8 @@ describe("hot-connect notifications", () => {
     const runPromise = proc.run(collector.deliver);
     await tick(50);
 
-    // Only the catch-up delivery should exist, no hot-connect notification
-    expect(collector.deliveries.length).toBe(1);
-    const text = textOf(collector.deliveries[0]);
-    expect(text).toContain("Session context");
-    expect(text).not.toContain("added");
+    // No startup injection — deliveries should be empty (no events sent)
+    expect(collector.deliveries.length).toBe(0);
 
     await proc.stop();
     await runPromise;
@@ -746,60 +667,7 @@ describe("onContextCompacted", () => {
     expect(proc.resolveRef(ref)).toBeUndefined();
   });
 
-  test("schedules full catch-up rebuild after current delivery", async () => {
-    const proc = makeProcessor();
-    const room = makeRoom();
-    const humanCh = await addHuman(room, "human-1", "Alice");
-    await proc.connectRoom(room, "lobby");
-
-    let deliveryCount = 0;
-    const deliveries: ContentPart[][] = [];
-    let resolveDelivery: (() => void) | null = null;
-    let deliveryBlocked: (() => void) | null = null;
-
-    // Block during the second delivery (first is catch-up) so we can call
-    // onContextCompacted while _processRaw is running.
-    const deliver = async (parts: ContentPart[]) => {
-      deliveryCount++;
-      deliveries.push(parts);
-      if (deliveryCount === 2) {
-        deliveryBlocked?.();
-        await new Promise<void>((resolve) => {
-          resolveDelivery = resolve;
-        });
-      }
-    };
-
-    const runPromise = proc.run(deliver);
-    await tick(50);
-    const catchUpCount = deliveries.length;
-
-    const blockedPromise = new Promise<void>((resolve) => {
-      deliveryBlocked = resolve;
-    });
-
-    // Trigger a message to enter the delivery path
-    await humanCh.sendMessage("before compaction");
-    await blockedPromise; // wait until delivery is blocked
-
-    const preCompactionCount = deliveries.length;
-
-    // Simulate compaction while delivery is in progress
-    proc.onContextCompacted();
-
-    // Release the blocked delivery — _processRaw's finally block should
-    // detect _needsFullCatchUp and rebuild
-    resolveDelivery?.();
-    await tick(200);
-
-    // Should have received an additional catch-up rebuild
-    expect(deliveries.length).toBeGreaterThan(preCompactionCount);
-    const lastDelivery = textOf(deliveries[deliveries.length - 1]);
-    expect(lastDelivery).toContain("Session context");
-
-    await proc.stop();
-    await runPromise;
-  });
+  // (compaction re-injection removed — agent recovers via catch_up tool call)
 });
 
 // ── 10. Ref map delegation ──────────────────────────────────────────────────
@@ -1003,48 +871,17 @@ describe("event log", () => {
 
 // ── setModeForRoom notification ─────────────────────────────────────────────
 
-describe("setModeForRoom notification", () => {
-  test("mode change sends notification to agent when running", async () => {
+describe("setModeForRoom", () => {
+  // Mode change notifications removed — mode changes are no longer pushed to agent.
+  // The agent discovers mode changes via catch_up or set_mode tool responses.
+
+  test("mode change updates engagement strategy", async () => {
     const proc = makeProcessor();
     const room = makeRoom();
     await proc.connectRoom(room, "lobby");
-
-    const collector = makeDeliveryCollector();
-    const runPromise = proc.run(collector.deliver);
-    await tick(50);
-    const catchUpCount = collector.deliveries.length;
 
     proc.setModeForRoom(room.roomId, "standby-me");
-    await tick(100);
-
-    const postMode = collector.deliveries.slice(catchUpCount);
-    expect(postMode.length).toBeGreaterThan(0);
-    const text = postMode.map(textOf).join("\n");
-    expect(text).toContain("mode changed");
-    expect(text).toContain("standby-me");
-
-    await proc.stop();
-    await runPromise;
-  });
-
-  test("mode change with notifyAgent=false does NOT send notification", async () => {
-    const proc = makeProcessor();
-    const room = makeRoom();
-    await proc.connectRoom(room, "lobby");
-
-    const collector = makeDeliveryCollector();
-    const runPromise = proc.run(collector.deliver);
-    await tick(50);
-    const catchUpCount = collector.deliveries.length;
-
-    proc.setModeForRoom(room.roomId, "standby-me", false);
-    await tick(100);
-
-    // No additional delivery
-    expect(collector.deliveries.length).toBe(catchUpCount);
-
-    await proc.stop();
-    await runPromise;
+    expect(proc.getModeForRoom(room.roomId)).toBe("standby-me");
   });
 });
 

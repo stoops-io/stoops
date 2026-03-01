@@ -25,9 +25,9 @@ Each event type has a role via `EVENT_ROLE`: `message`, `mention`, `ambient`, or
 - RefMap (bidirectional 4-digit decimal refs ↔ message UUIDs, LCG generator)
 - Room connections (via `ConnectionRegistry`)
 - Event deduplication (via `EventTracker`, self-clears at 500 entries)
-- Delivery lock (events during delivery queued, drained as "while you were responding" batch)
+- Delivery lock (events during delivery queued, drained as batch after delivery completes)
 
-Delivery is pluggable — `run(deliver, eventSource?)` takes a callback and an optional external event source.
+Delivery is pluggable — `run(deliver, eventSource?, initialParts?)` takes a callback, an optional external event source, and optional initial content to deliver before the event loop.
 
 **RoomDataSource** — uniform interface for reading/writing room data. Two implementations:
 - `LocalRoomDataSource` — wraps Room + Channel for in-process access
@@ -116,11 +116,11 @@ One process. Bridges N stoop servers to one Claude Code instance.
 
 1. **SseMultiplexer** — one SSE connection per stoop server. Parses `data:` lines from SSE format. Wraps events as `LabeledEvent { roomId, roomName, event }`. Merges into a single `AsyncIterable<LabeledEvent>`. Per-connection `AbortController`. Exponential backoff reconnection (1s → 30s max). Dynamic add/remove while running.
 
-2. **EventProcessor** — runs engagement classification client-side. Accepts the SseMultiplexer as an external event source via `run(deliver, eventSource)`. Uses `connectRemoteRoom()` to register rooms without creating local Channels.
+2. **EventProcessor** — runs engagement classification client-side. Accepts the SseMultiplexer as an external event source via `run(deliver, eventSource, initialParts?)`. Uses `connectRemoteRoom()` to register rooms without creating local Channels.
 
-3. **RuntimeMcpServer** — local HTTP MCP server on localhost. Claude Code connects to this via `--mcp-config`. Routes tool calls to the right stoop server via callback functions that map room names to server URLs. 7 standard tools + 2 admin tools (with `--admin` flag).
+3. **RuntimeMcpServer** — local HTTP MCP server on localhost. Claude Code connects to this via `--mcp-config`. Routes tool calls to the right stoop server via callback functions that map room names to server URLs. 7 standard tools + 2 admin tools (with `--admin` flag). `join_room` returns rich onboarding response (identity, mode, participants, recent activity).
 
-4. **tmux delivery** — `contentPartsToString(parts)` → `tmuxInjectText()` wrapped in `<room-event>` XML tags → `tmuxSendEnter()`.
+4. **tmux delivery** — `contentPartsToString(parts)` → `tmuxInjectText()` → `tmuxSendEnter()`. Events delivered as compact one-liner plain text, no XML wrapping.
 
 **SSE participant tracking:** The runtime wraps the SseMultiplexer to intercept `ParticipantJoined`/`ParticipantLeft` events and update each `RemoteRoomDataSource`'s participant cache.
 
@@ -132,9 +132,10 @@ One process. Bridges N stoop servers to one Claude Code instance.
 5. Create runtime MCP server with callbacks wired to HTTP calls
 6. Write MCP config JSON to temp directory
 7. Create tmux session, `claude --mcp-config <path>` inside it
-8. Start `EventProcessor.run(tmuxDeliver, wrappedSseSource)`
-9. Block on `tmuxAttach()` — user interacts with Claude Code
-10. Cleanup: stop EventProcessor, close SseMultiplexer, stop MCP server, `POST /disconnect` to all servers, kill tmux session, remove temp directory
+8. Build auto-join startup message (minimal one-liner per room)
+9. Start `EventProcessor.run(tmuxDeliver, wrappedSseSource, initialParts)`
+10. Block on `tmuxAttach()` — user interacts with Claude Code
+11. Cleanup: stop EventProcessor, close SseMultiplexer, stop MCP server, `POST /disconnect` to all servers, kill tmux session, remove temp directory
 
 **Mid-session room management:** `stoops__join_room(url, alias?)` creates a new RemoteRoomDataSource + SSE connection + EventProcessor registration while running. `stoops__leave_room(room)` tears down the connection.
 
@@ -187,12 +188,12 @@ No engagement model. Humans see all events. Server enriches MessageSent with `_r
 
 ```
 Room → Channel → SSE → SseMultiplexer → EventProcessor → tmuxInjectText()
-                        (per-server)      (engagement,      (<room-event> XML)
+                        (per-server)      (engagement,      (plain text)
                                            buffering,
                                            formatting)
 ```
 
-Events classified through engagement. Content events buffered per-room, flushed with next trigger. Events arriving during delivery queued and drained as "while you were responding" batch.
+Events classified through engagement. Content events buffered per-room, flushed with next trigger. Events arriving during delivery queued and drained as batch.
 
 ### Agent (app path)
 

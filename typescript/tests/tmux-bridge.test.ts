@@ -13,7 +13,7 @@ function screen(s: string): string[] {
 describe("detectStateFromLines", () => {
   // ── Idle ────────────────────────────────────────────────────────────────
 
-  test("detects idle state: empty prompt with footer", () => {
+  test("detects idle state: old layout with ❯❯ footer", () => {
     const lines = screen(`
   some previous output here
 
@@ -24,7 +24,7 @@ describe("detectStateFromLines", () => {
     expect(detectStateFromLines(lines)).toBe("idle");
   });
 
-  test("detects idle state: prompt with only whitespace", () => {
+  test("detects idle state: old layout, prompt with only whitespace", () => {
     const lines = screen(`
 ❯
 
@@ -33,7 +33,7 @@ describe("detectStateFromLines", () => {
     expect(detectStateFromLines(lines)).toBe("idle");
   });
 
-  test("detects idle with › prompt character variant", () => {
+  test("detects idle with › prompt character variant (old layout)", () => {
     const lines = screen(`
 some output
 
@@ -44,9 +44,34 @@ some output
     expect(detectStateFromLines(lines)).toBe("idle");
   });
 
+  test("detects idle state: new layout with separator lines", () => {
+    const lines = screen(`
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ⚠Large CLAUDE.md
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  PR #2                                            /ide for Visual Studio Code
+`);
+    expect(detectStateFromLines(lines)).toBe("idle");
+  });
+
+  test("detects idle: new layout with placeholder text is still idle", () => {
+    // Claude shows "Try ..." as placeholder, but prompt is empty (no user input)
+    const lines = screen(`
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+  PR #2
+`);
+    expect(detectStateFromLines(lines)).toBe("idle");
+  });
+
   // ── Typing ──────────────────────────────────────────────────────────────
 
-  test("detects typing state: text after prompt", () => {
+  test("detects typing state: old layout", () => {
     const lines = screen(`
   previous output
 
@@ -57,11 +82,21 @@ some output
     expect(detectStateFromLines(lines)).toBe("typing");
   });
 
-  test("detects typing state: partial text", () => {
+  test("detects typing state: old layout, partial text", () => {
     const lines = screen(`
 ❯ fix the b
 
 ❯❯ accept edits on (shift+tab to cycle)
+`);
+    expect(detectStateFromLines(lines)).toBe("typing");
+  });
+
+  test("detects typing state: new layout with separator lines", () => {
+    const lines = screen(`
+────────────────────────────────────────────────────────────────────────────────
+❯ hello world
+────────────────────────────────────────────────────────────────────────────────
+  PR #2                                            /ide for Visual Studio Code
 `);
     expect(detectStateFromLines(lines)).toBe("typing");
   });
@@ -187,10 +222,10 @@ Esc to cancel
     expect(detectStateFromLines(lines)).toBe("unknown");
   });
 
-  test("returns unknown when no footer line found", () => {
+  test("returns unknown when ❯ has no separator or footer", () => {
     const lines = screen(`
 ❯ some text
-but no footer line
+but no separator or footer line
 `);
     expect(detectStateFromLines(lines)).toBe("unknown");
   });
@@ -198,7 +233,6 @@ but no footer line
   // ── Priority ────────────────────────────────────────────────────────────
 
   test("dialog takes priority over prompt detection", () => {
-    // If a dialog is visible, even with a prompt-like line, it's a dialog
     const lines = screen(`
 ❯ some text
 

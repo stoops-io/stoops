@@ -10,7 +10,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { contentPartsToString, getSystemPreamble } from "../../agent/prompts.js";
+import { contentPartsToString } from "../../agent/prompts.js";
 import type { ContentPart } from "../../agent/types.js";
 import { setupAgentRuntime, type AgentRuntimeOptions } from "../runtime-setup.js";
 
@@ -124,21 +124,16 @@ export async function runOpencode(options: AgentRuntimeOptions): Promise<void> {
 
   // ── Build deliver callback ──────────────────────────────────────────────
 
-  const systemPreamble = getSystemPreamble();
-
   async function deliver(parts: ContentPart[]): Promise<void> {
     const text = contentPartsToString(parts);
     if (!text.trim()) return;
-
-    const wrapped = `<room-event>\n${text}\n</room-event>`;
 
     try {
       const res = await fetch(`${opencodeUrl}/session/${sessionId}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          parts: [{ type: "text", text: wrapped }],
-          system: systemPreamble,
+          parts: [{ type: "text", text }],
         }),
       });
       if (!res.ok) {
@@ -152,7 +147,7 @@ export async function runOpencode(options: AgentRuntimeOptions): Promise<void> {
 
   // ── Start the event loop ────────────────────────────────────────────────
 
-  const eventLoopPromise = setup.processor.run(deliver, setup.wrappedSource);
+  const eventLoopPromise = setup.processor.run(deliver, setup.wrappedSource, setup.initialParts);
 
   console.log(`\n  OpenCode agent running.`);
   console.log(`  To watch: opencode attach ${opencodeUrl}\n`);

@@ -67,8 +67,9 @@ describe("MessageSent formatting", () => {
     expect(text).toContain("[Kitchen]");
     expect(text).toContain("Alice");
     expect(text).toContain("hello everyone");
-    // Should contain a ref like (#abcd) — the static hex ref from messageRef
-    expect(text).toMatch(/\(#[a-z0-9]+\)/);
+    // New format: #ref before room label, no parentheses
+    expect(text).toMatch(/#[a-z0-9]+/);
+    expect(text).not.toContain("(#");
   });
 
   test("message without room label omits prefix", () => {
@@ -93,8 +94,7 @@ describe("MessageSent formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    // No room label — output goes straight from timestamp to participant label
-    expect(text).not.toMatch(/\[\d{2}:\d{2}:\d{2}\] \[(?!human\]|agent\])/);
+    expect(text).not.toContain("[Kitchen]");
     expect(text).toContain("Alice");
     expect(text).toContain("hi");
   });
@@ -121,10 +121,10 @@ describe("MessageSent formatting", () => {
 
     const parts = formatEvent(event, resolve, null, "Kitchen", null, () => "9999");
     const text = textOf(parts);
-    expect(text).toContain("(#9999)");
+    expect(text).toContain("#9999");
   });
 
-  test("agent participant gets 'agent' label", () => {
+  test("no type labels in event output", () => {
     const event = createEvent<MessageSentEvent>({
       type: "MessageSent",
       category: "MESSAGE",
@@ -146,7 +146,10 @@ describe("MessageSent formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    expect(text).toContain("[agent] Quinn");
+    // No type labels in new format
+    expect(text).not.toContain("[agent]");
+    expect(text).not.toContain("[human]");
+    expect(text).toContain("Quinn");
   });
 
   test("unknown sender falls back to sender_name from message", () => {
@@ -171,7 +174,6 @@ describe("MessageSent formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    // participantLabel returns the fallback sender_name when resolve returns null
     expect(text).toContain("Ghost");
   });
 });
@@ -179,7 +181,7 @@ describe("MessageSent formatting", () => {
 // ── MessageSent with reply context ───────────────────────────────────────────
 
 describe("MessageSent with reply context", () => {
-  test("reply context shows quoted original message", () => {
+  test("reply context shows sender name and arrow", () => {
     const event = createEvent<MessageSentEvent>({
       type: "MessageSent",
       category: "MESSAGE",
@@ -202,13 +204,13 @@ describe("MessageSent with reply context", () => {
     const replyCtx = { senderName: "Alice", content: "I think we should refactor" };
     const parts = formatEvent(event, resolve, replyCtx, "Kitchen");
     const text = textOf(parts);
+    expect(text).toContain("→");
     expect(text).toContain("Alice");
-    expect(text).toContain("I think we should refactor");
     expect(text).toContain("great point!");
     expect(text).toContain("[Kitchen]");
   });
 
-  test("long reply context is truncated to 60 chars", () => {
+  test("reply uses ref-based format, not quoted content", () => {
     const event = createEvent<MessageSentEvent>({
       type: "MessageSent",
       category: "MESSAGE",
@@ -232,9 +234,11 @@ describe("MessageSent with reply context", () => {
     const replyCtx = { senderName: "Alice", content: longContent };
     const parts = formatEvent(event, resolve, replyCtx);
     const text = textOf(parts);
-    // Should be truncated — the first 57 chars + "..."
-    expect(text).toContain("A".repeat(57) + "...");
-    expect(text).not.toContain("A".repeat(58));
+    // New format uses ref, not quoted content
+    expect(text).toContain("→");
+    expect(text).toContain("Alice");
+    // Content is NOT quoted in replies anymore
+    expect(text).not.toContain('"');
   });
 
   test("reply_to_id present but no replyContext skips reply formatting", () => {
@@ -295,10 +299,10 @@ describe("Mentioned formatting", () => {
     expect(text).toContain("\u26A1"); // lightning bolt
     expect(text).toContain("[Kitchen]");
     expect(text).toContain("Alice");
-    expect(text).toContain("mentioned you");
     expect(text).toContain("@Quinn what do you think?");
-    // Should contain a ref
-    expect(text).toMatch(/\(#[a-z0-9]+\)/);
+    // Ref without parentheses
+    expect(text).toMatch(/#[a-z0-9]+/);
+    expect(text).not.toContain("(#");
   });
 
   test("mention with custom assignRef", () => {
@@ -323,7 +327,7 @@ describe("Mentioned formatting", () => {
 
     const parts = formatEvent(event, resolve, null, undefined, null, () => "4242");
     const text = textOf(parts);
-    expect(text).toContain("(#4242)");
+    expect(text).toContain("#4242");
   });
 
   test("mention with image includes image ContentPart", () => {
@@ -358,7 +362,7 @@ describe("Mentioned formatting", () => {
 // ── ParticipantJoined/Left formatting ────────────────────────────────────────
 
 describe("ParticipantJoined/Left formatting", () => {
-  test("ParticipantJoined shows join message with participant label", () => {
+  test("ParticipantJoined shows compact join message", () => {
     const event = createEvent<ParticipantJoinedEvent>({
       type: "ParticipantJoined",
       category: "PRESENCE",
@@ -370,11 +374,10 @@ describe("ParticipantJoined/Left formatting", () => {
     const parts = formatEvent(event, resolve, null, "Kitchen");
     const text = textOf(parts);
     expect(text).toContain("[Kitchen]");
-    expect(text).toContain("Alice");
-    expect(text).toContain("joined the chat");
+    expect(text).toContain("+ Alice joined");
   });
 
-  test("ParticipantJoined for agent shows 'agent' label", () => {
+  test("ParticipantJoined has no type label", () => {
     const event = createEvent<ParticipantJoinedEvent>({
       type: "ParticipantJoined",
       category: "PRESENCE",
@@ -385,11 +388,12 @@ describe("ParticipantJoined/Left formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    expect(text).toContain("[agent] Quinn");
-    expect(text).toContain("joined the chat");
+    // No type labels in new format
+    expect(text).not.toContain("[agent]");
+    expect(text).toContain("+ Quinn joined");
   });
 
-  test("ParticipantLeft shows leave message", () => {
+  test("ParticipantLeft shows compact leave message", () => {
     const event = createEvent<ParticipantLeftEvent>({
       type: "ParticipantLeft",
       category: "PRESENCE",
@@ -401,8 +405,7 @@ describe("ParticipantJoined/Left formatting", () => {
     const parts = formatEvent(event, resolve, null, "Kitchen");
     const text = textOf(parts);
     expect(text).toContain("[Kitchen]");
-    expect(text).toContain("Alice");
-    expect(text).toContain("left the chat");
+    expect(text).toContain("- Alice left");
   });
 
   test("ParticipantLeft without room label omits prefix", () => {
@@ -416,16 +419,29 @@ describe("ParticipantJoined/Left formatting", () => {
 
     const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    // No room label — output goes straight from timestamp to participant label
-    expect(text).not.toMatch(/\[\d{2}:\d{2}:\d{2}\] \[(?!human\]|agent\])/);
-    expect(text).toContain("left the chat");
+    expect(text).not.toContain("[Kitchen]");
+    expect(text).toContain("- Alice left");
+  });
+
+  test("presence events have timestamps", () => {
+    const event = createEvent<ParticipantJoinedEvent>({
+      type: "ParticipantJoined",
+      category: "PRESENCE",
+      room_id: "room-1",
+      participant_id: alice.id,
+      participant: alice,
+    });
+
+    const parts = formatEvent(event, resolve, null, "Kitchen");
+    const text = textOf(parts);
+    expect(text).toMatch(/\[\d{2}:\d{2}:\d{2}\]/);
   });
 });
 
 // ── ReactionAdded formatting ─────────────────────────────────────────────────
 
 describe("ReactionAdded formatting", () => {
-  test("reaction to self message", () => {
+  test("reaction with target uses ref-based format", () => {
     const event = createEvent<ReactionAddedEvent>({
       type: "ReactionAdded",
       category: "MESSAGE",
@@ -446,33 +462,8 @@ describe("ReactionAdded formatting", () => {
     expect(text).toContain("[Kitchen]");
     expect(text).toContain("Alice");
     expect(text).toContain("\uD83D\uDC4D");
-    expect(text).toContain("your message");
-    expect(text).toContain("I posted this message");
-  });
-
-  test("reaction to someone else's message", () => {
-    const event = createEvent<ReactionAddedEvent>({
-      type: "ReactionAdded",
-      category: "MESSAGE",
-      room_id: "room-1",
-      participant_id: alice.id,
-      message_id: "target-msg-id",
-      emoji: "\u2764\uFE0F",
-    });
-
-    const reactionTarget = {
-      senderName: "Bob",
-      content: "Bob said this",
-      isSelf: false,
-    };
-
-    const parts = formatEvent(event, resolve, null, "Kitchen", reactionTarget);
-    const text = textOf(parts);
-    expect(text).toContain("Alice");
-    expect(text).toContain("\u2764\uFE0F");
-    expect(text).toContain("Bob's");
-    expect(text).toContain("Bob said this");
-    expect(text).not.toContain("your message");
+    // New format: ref-based, not content-based
+    expect(text).toContain("to #");
   });
 
   test("reaction without target context shows minimal text", () => {
@@ -492,35 +483,26 @@ describe("ReactionAdded formatting", () => {
     expect(text).toContain("reacted");
   });
 
-  test("long reaction target content is truncated to 40 chars", () => {
+  test("reaction events have timestamps", () => {
     const event = createEvent<ReactionAddedEvent>({
       type: "ReactionAdded",
       category: "MESSAGE",
       room_id: "room-1",
       participant_id: alice.id,
-      message_id: "msg-id",
+      message_id: "target-msg-id",
       emoji: "\uD83D\uDC4D",
     });
 
-    const longContent = "X".repeat(60);
-    const reactionTarget = {
-      senderName: "Bob",
-      content: longContent,
-      isSelf: false,
-    };
-
-    const parts = formatEvent(event, resolve, null, undefined, reactionTarget);
+    const parts = formatEvent(event, resolve);
     const text = textOf(parts);
-    // Truncated to 37 chars + "..."
-    expect(text).toContain("X".repeat(37) + "...");
-    expect(text).not.toContain("X".repeat(38));
+    expect(text).toMatch(/\[\d{2}:\d{2}:\d{2}\]/);
   });
 });
 
-// ── ContextCompacted formatting ──────────────────────────────────────────────
+// ── ContextCompacted returns null ────────────────────────────────────────────
 
-describe("ContextCompacted formatting", () => {
-  test("ContextCompacted shows memory refreshed message", () => {
+describe("ContextCompacted returns null", () => {
+  test("ContextCompacted returns null (no longer formatted)", () => {
     const event = createEvent<ContextCompactedEvent>({
       type: "ContextCompacted",
       category: "ACTIVITY",
@@ -530,26 +512,7 @@ describe("ContextCompacted formatting", () => {
     });
 
     const parts = formatEvent(event, resolve, null, "Kitchen");
-    const text = textOf(parts);
-    expect(text).toContain("[Kitchen]");
-    expect(text).toContain("Quinn");
-    expect(text).toContain("memory was refreshed");
-  });
-
-  test("ContextCompacted without room label", () => {
-    const event = createEvent<ContextCompactedEvent>({
-      type: "ContextCompacted",
-      category: "ACTIVITY",
-      room_id: "room-1",
-      participant_id: quinn.id,
-      participant: quinn,
-    });
-
-    const parts = formatEvent(event, resolve);
-    const text = textOf(parts);
-    // No room label — output goes straight from timestamp to participant label
-    expect(text).not.toMatch(/\[\d{2}:\d{2}:\d{2}\] \[(?!human\]|agent\])/);
-    expect(text).toContain("memory was refreshed");
+    expect(parts).toBeNull();
   });
 });
 
@@ -674,11 +637,11 @@ describe("helper functions", () => {
     expect(messageRef("12345678-abcd-efgh-ijkl")).toBe("1234");
   });
 
-  test("participantLabel shows 'human' for humans", () => {
+  test("participantLabel shows 'human' for humans (legacy)", () => {
     expect(participantLabel(alice)).toBe("[human] Alice");
   });
 
-  test("participantLabel shows 'agent' for agent type", () => {
+  test("participantLabel shows 'agent' for agent type (legacy)", () => {
     expect(participantLabel(quinn)).toBe("[agent] Quinn");
   });
 

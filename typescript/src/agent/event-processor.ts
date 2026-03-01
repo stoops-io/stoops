@@ -17,7 +17,6 @@ import {
   type ActivityEvent,
   type MentionedEvent,
   type ToolUseEvent,
-  type ContextCompactedEvent,
 } from "../core/events.js";
 import type { Room } from "../core/room.js";
 import { type EngagementMode, type EventDisposition, type EngagementStrategy, StoopsEngagement } from "./engagement.js";
@@ -78,8 +77,6 @@ export class EventProcessor implements RoomResolver {
   private _stopped = false;
   private _currentContextRoomId: string | null = null;
   private _log: RoomEvent[] = [];
-  private _pendingNotifications: Array<{ parts: ContentPart[]; contextRoomId: string | null }> = [];
-  private _needsFullCatchUp = false;
   private _refMap = new RefMap();
   private _injectBuffer: ContentPart[][] = [];
 
@@ -134,32 +131,11 @@ export class EventProcessor implements RoomResolver {
 
   /**
    * Called by the consumer when context was compacted.
-   * Clears seen-event cache and ref map, schedules full catch-up rebuild.
+   * Clears seen-event cache and ref map so catch_up returns full history.
    */
   onContextCompacted(): void {
     this._tracker.clearDelivered();
     this._refMap.clear();
-    this._needsFullCatchUp = true;
-
-    // Emit ContextCompactedEvent to the triggering room
-    if (this._currentContextRoomId) {
-      const conn = this._registry.get(this._currentContextRoomId);
-      if (conn) {
-        const self = conn.dataSource.listParticipants().find((p) => p.id === this._participantId);
-        if (self) {
-          const emitter = conn.dataSource.emitEvent
-            ? (e: RoomEvent) => conn.dataSource.emitEvent!(e)
-            : (e: RoomEvent) => conn.channel.emit(e);
-          emitter(createEvent<ContextCompactedEvent>({
-            type: "ContextCompacted",
-            category: "ACTIVITY",
-            room_id: this._currentContextRoomId,
-            participant_id: this._participantId,
-            participant: self,
-          })).catch(() => {});
-        }
-      }
-    }
   }
 
   /**
@@ -244,16 +220,6 @@ export class EventProcessor implements RoomResolver {
     })).catch(() => {});
 
     this._multiplexer.addChannel(room.roomId, roomName, channel);
-
-    // Hot-connect notification if already running
-    if (this._deliver && !this._stopped) {
-      const notifyText = `You've been added to [${roomName}] — ${initialMode}.`;
-      if (this._processing) {
-        this._pendingNotifications.push({ parts: [{ type: "text", text: notifyText }], contextRoomId: room.roomId });
-      } else {
-        await this._processRaw([{ type: "text", text: notifyText }], room.roomId);
-      }
-    }
   }
 
   /**
@@ -281,17 +247,6 @@ export class EventProcessor implements RoomResolver {
     };
     this._registry.add(dataSource.roomId, conn);
     if (mode) this._engagement.setMode?.(dataSource.roomId, mode);
-
-    // Hot-connect notification if already running
-    if (this._deliver && !this._stopped) {
-      const initialMode = this.getModeForRoom(dataSource.roomId);
-      const notifyText = `You've been added to [${roomName}] — ${initialMode}.`;
-      if (this._processing) {
-        this._pendingNotifications.push({ parts: [{ type: "text", text: notifyText }], contextRoomId: dataSource.roomId });
-      } else {
-        this._processRaw([{ type: "text", text: notifyText }], dataSource.roomId).catch(console.error);
-      }
-    }
   }
 
   /** Disconnect a remote room (by room ID). */
@@ -332,14 +287,6 @@ export class EventProcessor implements RoomResolver {
         detail: { mode },
       })).catch(() => {});
       this._options.onModeChange?.(roomId, conn.name, mode);
-      if (notifyAgent && this._deliver && !this._stopped) {
-        const notifyText = `[${conn.name}] mode changed to ${mode}.`;
-        if (this._processing) {
-          this._pendingNotifications.push({ parts: [{ type: "text", text: notifyText }], contextRoomId: roomId });
-        } else {
-          this._processRaw([{ type: "text", text: notifyText }], roomId).catch(console.error);
-        }
-      }
     }
   }
 
@@ -360,17 +307,20 @@ export class EventProcessor implements RoomResolver {
    * @param eventSource — optional external event source (e.g. SseMultiplexer).
    *   If provided, events are consumed from this instead of the internal
    *   EventMultiplexer. Used by the client-side agent runtime.
+   * @param initialParts — optional content to deliver before entering the
+   *   event loop. Used by the runtime to deliver auto-join confirmation.
    */
   async run(
     deliver: (parts: ContentPart[]) => Promise<void>,
     eventSource?: AsyncIterable<LabeledEvent>,
+    initialParts?: ContentPart[],
   ): Promise<void> {
     this._deliver = deliver;
 
-    // Startup — inject full catch-up
-    if (this._registry.size > 0) {
+    // Deliver initial content if provided (e.g. auto-join confirmation)
+    if (initialParts && initialParts.length > 0) {
       await this._processRaw(
-        await this._buildFullCatchUp(),
+        initialParts,
         this._registry.values().next().value?.dataSource.roomId ?? null,
       );
     }
@@ -396,7 +346,7 @@ export class EventProcessor implements RoomResolver {
     this._deliver = null;
   }
 
-  // ── Full catch-up ───────────────────────────────────────────────────────────
+  // ── Full catch-up (kept for app-path consumers) ────────────────────────────
 
   async buildFullCatchUp(): Promise<ContentPart[]> {
     return this._buildFullCatchUp();
@@ -531,11 +481,7 @@ export class EventProcessor implements RoomResolver {
       }
 
       if (formatted.length > 0) {
-        const batchParts: ContentPart[] = [
-          { type: "text", text: "While you were responding, this happened:\n" },
-          ...mergeParts(formatted),
-        ];
-        await this._processRaw(batchParts, batchContextRoom);
+        await this._processRaw(mergeParts(formatted), batchContextRoom);
       }
     }
   }
@@ -648,21 +594,6 @@ export class EventProcessor implements RoomResolver {
     } finally {
       this._currentContextRoomId = null;
       this._processing = false;
-
-      // Post-compaction catch-up rebuild
-      if (this._needsFullCatchUp && !this._stopped) {
-        this._needsFullCatchUp = false;
-        await this._processRaw(
-          await this._buildFullCatchUp(),
-          this._registry.values().next().value?.dataSource.roomId ?? null,
-        );
-      }
-
-      // Drain pending notifications
-      while (this._pendingNotifications.length > 0 && !this._stopped) {
-        const next = this._pendingNotifications.shift()!;
-        await this._processRaw(next.parts, next.contextRoomId);
-      }
     }
   }
 }

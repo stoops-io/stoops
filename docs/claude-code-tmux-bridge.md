@@ -8,7 +8,7 @@ Stoops needs to push room events into Claude Code in real-time. Claude Code is a
 
 ## Starting point: tmux send-keys
 
-tmux is a terminal multiplexer. When you run a process inside a tmux session, you can programmatically type into it from outside using `tmux send-keys`. This is what stoops currently does — launch Claude Code inside tmux, inject room events as `<room-event>` tagged text via `send-keys`, and press Enter.
+tmux is a terminal multiplexer. When you run a process inside a tmux session, you can programmatically type into it from outside using `tmux send-keys`. This is what stoops does — launch Claude Code inside tmux, inject room events as plain text via `send-keys`, and press Enter.
 
 This works for the happy path. But it's blind — you're shoving bytes into a terminal with no idea what state the app is in.
 
@@ -19,7 +19,7 @@ We identified several states where blind injection breaks:
 1. **Claude Code is showing a permission prompt** (Allow/Deny, Yes/No) — injected text goes into the prompt's input buffer, gets interpreted as option selection or ignored entirely
 2. **Claude Code is showing a question dialog** (numbered options, multi-select checkboxes) — same problem, text lands in the wrong context
 3. **Claude Code is streaming a response** — text arrives but doesn't get processed as a new prompt until streaming finishes
-4. **User is mid-typing** — injected text gets interleaved with their input, producing garbage like `hel<room-event>...lo`
+4. **User is mid-typing** — injected text gets interleaved with their input, producing garbage
 5. **Autocomplete menu is visible** — keystrokes get eaten by the dropdown
 6. **Reverse search is active** (Ctrl+R) — text goes into search, not the prompt
 

@@ -1,13 +1,13 @@
 /**
  * Runtime MCP server — local MCP proxy for the client-side agent runtime.
  *
- * Claude Code connects to this local server. Tool calls are routed to the
- * right stoop server via the RoomResolver (which maps room names to
+ * Claude Code / OpenCode connects to this local server. Tool calls are routed
+ * to the right stoop server via the RoomResolver (which maps room names to
  * RemoteRoomDataSource instances).
  *
  * Tools:
  *   Always present:
- *     stoops__catch_up(room?) — with room: room catch-up. Without: list all rooms.
+ *     stoops__catch_up(room?) — with room: room catch-up. Without: list rooms + pending invites.
  *     stoops__search_by_text(room, query, count?, cursor?)
  *     stoops__search_by_message(room, ref, direction?, count?)
  *     stoops__send_message(room, content, reply_to?)
@@ -29,16 +29,27 @@ import {
   handleSearchByMessage,
   handleSendMessage,
   textResult,
-  resolveOrError,
 } from "../tool-handlers.js";
-import type { RemoteRoomDataSource } from "../remote-room-data-source.js";
+import { MODE_DESCRIPTIONS } from "../prompts.js";
+
+export interface JoinRoomResult {
+  success: boolean;
+  error?: string;
+  roomName?: string;
+  agentName?: string;
+  authority?: string;
+  mode?: string;
+  personName?: string;
+  participants?: Array<{ name: string; authority: string }>;
+  recentLines?: string[];
+}
 
 export interface RuntimeMcpServerOptions {
   resolver: RoomResolver;
   toolOptions: ToolHandlerOptions;
   admin?: boolean;
   /** Called when the agent requests joining a new room mid-session. */
-  onJoinRoom?: (url: string, alias?: string) => Promise<{ success: boolean; error?: string }>;
+  onJoinRoom?: (url: string, alias?: string) => Promise<JoinRoomResult>;
   /** Called when the agent requests leaving a room. */
   onLeaveRoom?: (room: string) => Promise<{ success: boolean; error?: string }>;
   /** Called when the agent changes its own mode. */
@@ -54,6 +65,51 @@ export interface RuntimeMcpServer {
   stop: () => Promise<void>;
 }
 
+/** Format a rich join_room response from the callback result. */
+function formatJoinResponse(result: JoinRoomResult): string {
+  const lines: string[] = [];
+
+  lines.push(`Joined ${result.roomName} as "${result.agentName}" (${result.authority})`);
+  lines.push("");
+
+  // Mode
+  if (result.mode) {
+    lines.push(`Mode: ${result.mode}`);
+    const desc = MODE_DESCRIPTIONS[result.mode];
+    if (desc) lines.push(`  ${desc}`);
+    lines.push(`  Change with set_mode.`);
+    lines.push("");
+  }
+
+  // Person
+  if (result.personName) {
+    lines.push(`Person: ${result.personName}`);
+    lines.push(`  Your person's messages always reach you regardless of mode.`);
+    lines.push("");
+  }
+
+  // Participants
+  if (result.participants && result.participants.length > 0) {
+    lines.push("Participants:");
+    for (const p of result.participants) {
+      lines.push(`  ${p.name} (${p.authority})`);
+    }
+    lines.push("");
+  }
+
+  // Recent activity
+  if (result.recentLines && result.recentLines.length > 0) {
+    lines.push("Recent:");
+    for (const line of result.recentLines) {
+      lines.push(`  ${line}`);
+    }
+    lines.push("");
+    lines.push(`${result.recentLines.length} message${result.recentLines.length === 1 ? "" : "s"} shown. Use catch_up("${result.roomName}") for more.`);
+  }
+
+  return lines.join("\n");
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   const { resolver, toolOptions } = opts;
@@ -61,14 +117,13 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   // ── stoops__catch_up ────────────────────────────────────────────────────
   server.tool(
     "stoops__catch_up",
-    "Catch up on a room. With room: returns participants + unseen events. Without room: lists all connected rooms with your mode and authority in each.",
+    "List your rooms and status. Call with no arguments to see connected rooms. With a room name, returns recent activity you haven't seen.",
     {
       room: z.string().optional().describe("Room name. Omit to list all connected rooms."),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async ({ room }: { room?: string }) => {
       if (!room) {
-        // List all rooms
         const rooms = resolver.listAll();
         if (rooms.length === 0) {
           return textResult("Not connected to any rooms.");
@@ -88,7 +143,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   // ── stoops__search_by_text ──────────────────────────────────────────────
   server.tool(
     "stoops__search_by_text",
-    "Search chat history by keyword. Returns the most recent matches with context.",
+    "Search chat history by keyword.",
     {
       room: z.string().describe("Room name"),
       query: z.string().describe("Keyword or phrase to search for"),
@@ -103,7 +158,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   // ── stoops__search_by_message ──────────────────────────────────────────
   server.tool(
     "stoops__search_by_message",
-    "Show messages around a known message ref. Use to scroll back or forward.",
+    "Show messages around a known message ref.",
     {
       room: z.string().describe("Room name"),
       ref: z.string().describe("Message ref (e.g. #3847)"),
@@ -119,12 +174,12 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   // ── stoops__send_message ────────────────────────────────────────────────
   server.tool(
     "stoops__send_message",
-    "Send a message to a room. Only speak when you have something genuinely worth saying.",
+    "Send a message to a room.",
     {
       room: z.string().describe("Room name"),
       content: z.string().describe("Message content"),
       reply_to_id: z.string().optional()
-        .describe("Only set when replying to a specific earlier message adds clarity. Use the #XXXX ref."),
+        .describe("Message ref to reply to (e.g. #3847)."),
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (args: any) => handleSendMessage(resolver, args, toolOptions) as any,
@@ -133,7 +188,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   // ── stoops__set_mode ────────────────────────────────────────────────────
   server.tool(
     "stoops__set_mode",
-    "Change your engagement mode for a room. Modes: everyone, people, agents, me, standby-everyone, standby-people, standby-agents, standby-me.",
+    "Change your engagement mode. Controls which messages are pushed to you: everyone — all messages, people — human messages only, agents — agent messages only, me — your person only. Prefix with standby- for @mentions only.",
     {
       room: z.string().describe("Room name"),
       mode: z.string().describe("Engagement mode"),
@@ -150,24 +205,28 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   // ── stoops__join_room ──────────────────────────────────────────────────
   server.tool(
     "stoops__join_room",
-    "Join a new stoop room mid-session. The URL should be a share link provided by a human.",
+    "Join a room. Returns your identity, participants, mode, and recent activity.",
     {
       url: z.string().describe("Share URL to join"),
-      alias: z.string().optional().describe("Local alias for the room (if name collides with an existing room)"),
+      alias: z.string().optional().describe("Local alias for the room (if name collides)"),
     },
     async ({ url, alias }: { url: string; alias?: string }) => {
       if (!opts.onJoinRoom) return textResult("Joining rooms not supported.");
       const result = await opts.onJoinRoom(url, alias);
-      return result.success
-        ? textResult(`Joined room successfully.`)
-        : textResult(result.error ?? "Failed to join room.");
+      if (!result.success) return textResult(result.error ?? "Failed to join room.");
+
+      // Rich response if we have room details
+      if (result.roomName && result.agentName) {
+        return textResult(formatJoinResponse(result));
+      }
+      return textResult(`Joined room successfully.`);
     },
   );
 
   // ── stoops__leave_room ─────────────────────────────────────────────────
   server.tool(
     "stoops__leave_room",
-    "Leave a stoop room.",
+    "Leave a room. Events stop flowing from it.",
     {
       room: z.string().describe("Room name to leave"),
     },

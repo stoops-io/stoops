@@ -42,6 +42,7 @@ export async function runClaude(options: AgentRuntimeOptions): Promise<void> {
   const mcpConfig = {
     mcpServers: {
       stoops: {
+        type: "http",
         url: setup.mcpServer.url,
       },
     },
@@ -69,12 +70,14 @@ export async function runClaude(options: AgentRuntimeOptions): Promise<void> {
 
   const bridge = new TmuxBridge(tmuxSession);
 
-  // Start the event loop in the background
-  const eventLoopPromise = setup.processor.run(bridge.deliver.bind(bridge), setup.wrappedSource);
+  // Start the event loop in the background — events queue until Claude is idle
+  const eventLoopPromise = setup.processor.run(bridge.deliver.bind(bridge), setup.wrappedSource, setup.initialParts);
 
-  // ── Wait for Claude Code to be ready, then attach ───────────────────────
+  // ── Brief pause for Claude to start, then attach immediately ────────────
+  // No need to gate on state detection — TmuxBridge queues events until
+  // Claude is ready. The user sees Claude start up naturally.
 
-  await bridge.waitForReady();
+  await new Promise((r) => setTimeout(r, 2_000));
 
   console.log("Attaching to Claude Code session...\n");
 

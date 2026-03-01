@@ -17,22 +17,20 @@ import { extractToken } from "./auth.js";
 import { RemoteRoomDataSource } from "../agent/remote-room-data-source.js";
 import { SseMultiplexer } from "../agent/sse-multiplexer.js";
 import { EventProcessor } from "../agent/event-processor.js";
-import { createRuntimeMcpServer, type RuntimeMcpServer } from "../agent/mcp/runtime.js";
+import { createRuntimeMcpServer, type RuntimeMcpServer, type JoinRoomResult } from "../agent/mcp/runtime.js";
+import { buildCatchUpLines } from "../agent/tool-handlers.js";
 import type { Participant } from "../core/types.js";
 import type { LabeledEvent } from "../agent/multiplexer.js";
+import type { ContentPart } from "../agent/types.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface AgentRuntimeOptions {
   joinUrls?: string[];
-  /** Legacy: room name (used with --server). */
   room?: string;
   name?: string;
-  /** Legacy: server URL. */
   server?: string;
-  /** If true, register admin MCP tools. */
   admin?: boolean;
-  /** Passthrough args after -- (forwarded to the underlying tool). */
   extraArgs?: string[];
 }
 
@@ -50,8 +48,8 @@ export interface JoinResult {
 export interface AgentRuntimeSetup {
   agentName: string;
   participantId: string;
-  /** Mutable — onJoinRoom pushes, onLeaveRoom splices. */
   joinResults: JoinResult[];
+  initialParts: ContentPart[] | undefined;
   processor: EventProcessor;
   sseMux: SseMultiplexer;
   mcpServer: RuntimeMcpServer;
@@ -153,10 +151,7 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
     }
   }
 
-  // All join results should have the same participantId (same agent across rooms on same server)
-  // but could be different across different servers. Use the first one.
-  const primaryResult = joinResults[0];
-  const participantId = primaryResult.participantId;
+  const participantId = joinResults[0].participantId;
 
   // ── Create SSE multiplexer ────────────────────────────────────────────
 
@@ -232,28 +227,53 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
         const sessionToken = String(data.sessionToken ?? "");
         const roomName = alias ?? String(data.roomName ?? "");
         const roomId = String(data.roomId ?? "");
+        const authority = String(data.authority ?? "participant");
         const participants = (data.participants as Participant[]) ?? [];
+        const newParticipantId = String(data.participantId ?? "");
 
         const dataSource = new RemoteRoomDataSource(serverUrl, sessionToken, roomId);
         dataSource.setParticipants(participants);
 
         // Register in EventProcessor and SSE multiplexer
+        const mode = processor.getModeForRoom(roomId) ?? "everyone";
         processor.connectRemoteRoom(dataSource, roomName);
         sseMux.addConnection(serverUrl, sessionToken, roomName, roomId);
 
         // Track for cleanup
-        joinResults.push({
+        const jr: JoinResult = {
           serverUrl,
           sessionToken,
-          participantId: String(data.participantId ?? ""),
+          participantId: newParticipantId,
           roomName,
           roomId,
-          authority: String(data.authority ?? "participant"),
+          authority,
           participants,
           dataSource,
-        });
+        };
+        joinResults.push(jr);
 
-        return { success: true };
+        // Build recent activity lines for the response
+        const conn = processor.resolve(roomName);
+        let recentLines: string[] = [];
+        if (conn) {
+          recentLines = await buildCatchUpLines(conn, {
+            isEventSeen: (id) => processor.isEventSeen(id),
+            markEventsSeen: (ids) => processor.markEventsSeen(ids),
+            assignRef: (id) => processor.assignRef(id),
+          });
+        }
+
+        return {
+          success: true,
+          roomName,
+          agentName,
+          authority,
+          mode,
+          participants: participants
+            .filter((p) => p.id !== newParticipantId)
+            .map((p) => ({ name: p.name, authority: (p as any).authority ?? "participant" })),
+          recentLines,
+        } as JoinRoomResult;
       } catch {
         return { success: false, error: `Cannot reach server at ${serverUrl}` };
       }
@@ -374,10 +394,24 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
     }
   }
 
+  // ── Build auto-join startup message (if any rooms were auto-joined) ──
+
+  let initialParts: ContentPart[] | undefined;
+  if (joinResults.length > 0) {
+    const roomSummaries = joinResults.map((jr) => {
+      const mode = processor.getModeForRoom(jr.roomId);
+      const pCount = jr.participants.length;
+      return `${jr.roomName} (${mode} mode, ${pCount} participant${pCount === 1 ? "" : "s"})`;
+    });
+    const text = `Auto-joined ${roomSummaries.join(" and ")}.`;
+    initialParts = [{ type: "text", text }];
+  }
+
   return {
     agentName,
     participantId,
     joinResults,
+    initialParts,
     processor,
     sseMux,
     mcpServer,
