@@ -7,7 +7,7 @@
  *   stoops [--room <name>] [--port <port>] [--share]                         Host a room + join it
  *   stoops serve [--room <name>] [--port <port>] [--share]                   Headless server only
  *   stoops join <url> [--name <name>] [--guest]                              Join a room as a human
- *   stoops run claude [--join <url>] [--name <name>] [--admin] [-- <args>]   Connect Claude Code
+ *   stoops run claude [--name <name>] [--admin] [-- <args>]                Connect Claude Code
  *   stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>] Connect OpenCode
  */
 
@@ -44,7 +44,7 @@ function printUsage(stream: typeof console.log = console.log): void {
   stream("  stoops [--room <name>] [--port <port>] [--share]                         Host + join");
   stream("  stoops serve [--room <name>] [--port <port>] [--share]                   Headless server");
   stream("  stoops join <url> [--name <name>] [--guest]                              Join a room");
-  stream("  stoops run claude [--join <url>] [--name <name>] [--admin] [-- <args>]   Connect Claude Code");
+  stream("  stoops run claude [--name <name>] [--admin] [-- <args>]                  Connect Claude Code");
   stream("  stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>] Connect OpenCode");
 }
 

@@ -127,6 +127,7 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(joinBody),
+          signal: AbortSignal.timeout(15_000),
         });
         if (!res.ok) return { success: false, error: `Failed to join: ${await res.text()}` };
 
@@ -187,8 +188,9 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
             .map((p) => ({ name: p.name, authority: (p as any).authority ?? "participant" })),
           recentLines,
         } as JoinRoomResult;
-      } catch {
-        return { success: false, error: `Cannot reach server at ${serverUrl}` };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, error: `Unable to connect. Is the server running? (${serverUrl}) — ${msg}` };
       }
     },
     onLeaveRoom: async (room) => {

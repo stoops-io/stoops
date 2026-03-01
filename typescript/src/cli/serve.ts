@@ -536,10 +536,10 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   Room:    ${roomName}
   Server:  ${serverUrl}${publicUrl !== serverUrl ? `\n  Tunnel:  ${publicUrl}` : ""}
 
-  Admin:   stoops join ${adminUrl}
-  Join:    stoops join ${joinUrl}
-  Agent:   stoops run claude --join ${joinUrl}
-  Agent:   stoops run opencode --join ${joinUrl}
+  Join:      stoops join ${joinUrl}
+  Admin:     stoops join ${adminUrl}
+  Claude:    stoops run claude  →  then tell agent to join: ${joinUrl}
+  OpenCode:  stoops run opencode --join ${joinUrl}
 `);
   }
 
