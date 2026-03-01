@@ -51,15 +51,13 @@ Starts the server and opens the chat TUI in one command. With `--share`, spawns 
 
 **Terminal 2 — connect an agent:**
 ```bash
-npx stoops run claude                                       # Claude Code, no room pre-joined
-npx stoops run claude --join <share-url>                   # Claude Code, prompted to join room on start
+npx stoops run claude                                       # Claude Code — then tell agent to join a room
+npx stoops run claude --admin                              # with admin MCP tools
+npx stoops run claude -- --model sonnet                    # passthrough args after --
 npx stoops run opencode --join <share-url>                 # OpenCode via HTTP API
-npx stoops run claude --join <url1> --join <url2>          # prompted to join multiple rooms
-npx stoops run claude --join <share-url> --admin           # with admin MCP tools
-npx stoops run claude --join <url> -- --model sonnet       # passthrough args after --
 npx stoops run opencode --join <url> -- --model gpt-4o     # passthrough args for opencode
 ```
-Launches a client-side agent runtime with MCP tools. If `--join` URLs are provided, the startup event asks the agent to call `join_room(url)` — the agent joins and gets full onboarding (identity, mode, participants, recent activity) from the tool response. Everything after `--` is forwarded to the underlying tool as-is.
+Launches a client-side agent runtime with MCP tools. For Claude Code, the agent joins rooms manually by calling `join_room(url)` — tell the agent the URL and it joins, getting full onboarding (identity, mode, participants, recent activity) from the tool response. For OpenCode, `--join` URLs are passed as startup prompts. Everything after `--` is forwarded to the underlying tool as-is.
 
 **Remote join (from another machine):**
 ```bash
@@ -73,7 +71,7 @@ Opens the TUI connected to a remote server. Events stream via SSE; messages sent
 npx stoops [--room <name>] [--port <port>] [--share]                            # host + join
 npx stoops serve [--room <name>] [--port <port>] [--share]                      # headless server only
 npx stoops join <url> [--name <name>] [--guest]                                 # join an existing room
-npx stoops run claude [--join <url>] [--name <name>] [--admin] [-- <args>]      # connect Claude Code
+npx stoops run claude [--name <name>] [--admin] [-- <args>]                     # connect Claude Code
 npx stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>]    # connect OpenCode
 ```
 
@@ -415,7 +413,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Dumb room server** — one room, one HTTP API, SSE broadcasting, authority enforcement; no EventProcessor, no tmux, no agent lifecycle
 - **Token-based auth** — all endpoints validate session tokens via `getSession()` helper; share tokens validated on join
 - **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` after server is ready
-- **Boot** — generates admin + participant share tokens; prints URLs with `stoops join`, `stoops run claude --join`, and `stoops run opencode --join` commands
+- **Boot** — generates admin + participant share tokens; prints URLs with `stoops join`, `stoops run claude` (with manual join instruction), and `stoops run opencode --join` commands
 - **HTTP API** on configurable port (default 7890):
   - `POST /join` — accepts `{ token, name?, type? }`; validates share token → determines authority; creates participant (admin/participant) or observer; returns `{ sessionToken, participantId, roomName, roomId, participants, authority }`
   - `POST /events` — SSE stream; auth via `Authorization: Bearer <token>` header; sends last 50 events as history then streams live; enriches `MessageSent` with `_replyToName`; POST required for Cloudflare tunnel real-time flushing
@@ -475,7 +473,8 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 
 - **`setupAgentRuntime(options)`** — agent-agnostic setup shared by `run claude` and `run opencode`; returns `AgentRuntimeSetup` with processor, SSE mux, MCP server, wrapped source, initialParts, and cleanup function
 - **Flow**: generate agent name → store `--join` URLs as pending (no HTTP join yet) → create empty SSE mux → create EventProcessor with empty selfId → create RuntimeMcpServer → wrap SSE source → build startup event → return setup
-- **No auto-join** — rooms are NOT joined during setup; agent calls `join_room()` via MCP tool; `onJoinRoom` handles HTTP join + SSE registration + EventProcessor connection + sets selfId on first join
+- **`initialParts`** — used by OpenCode path only; Claude Code ignores it (`joinUrls: undefined` passed from `run.ts`) since auto-injecting via tmux had timing issues
+- **No auto-join** — rooms are NOT joined during setup; agent calls `join_room()` via MCP tool; `onJoinRoom` handles HTTP join + SSE registration + EventProcessor connection + sets selfId on first join; 15s timeout on the join fetch with a clear error message on failure
 - **`AgentRuntimeOptions`** — `joinUrls?`, `name?`, `admin?`, `extraArgs?` — `--join` is optional; no `--room`/`--server` legacy flags
 - **`JoinResult`** — per-room join state: serverUrl, sessionToken, participantId, roomName, roomId, authority, participants, dataSource
 - **`AgentRuntimeSetup`** — returned by setup: agentName, joinResults (mutable, starts empty), initialParts, processor, sseMux, mcpServer, wrappedSource, cleanup()
@@ -487,10 +486,12 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 #### `stoops run claude` command (`cli/claude/run.ts`)
 
 - **Claude Code agent runtime** — thin wrapper over `setupAgentRuntime()` adding tmux-specific delivery
-- **Flow**: check `tmuxAvailable()` → `setupAgentRuntime(options)` → write MCP config file → create tmux session → launch `claude --mcp-config <path> <extraArgs>` → create TmuxBridge → `processor.run(bridge.deliver, wrappedSource, initialParts)` → tmux attach → cleanup
+- **Flow**: check `tmuxAvailable()` → `setupAgentRuntime(options)` → write stdio bridge + MCP config → create tmux session → launch `claude --mcp-config <path> <extraArgs>` → create TmuxBridge → `processor.run(bridge.deliver, wrappedSource)` → wait for startup → tmux attach → cleanup
+- **No `--join` flag** — Claude Code agents join rooms manually; user tells the agent the URL, agent calls `join_room()`. Removed because tmux send-keys injection had timing issues.
+- **Stdio MCP bridge** — Claude Code's HTTP MCP transport triggers OAuth on localhost (hangs forever). Instead, a tiny CJS bridge script is written to temp dir; Claude spawns it as a stdio subprocess; bridge proxies JSON-RPC → HTTP to the runtime MCP server. Uses `process.execPath` for the node binary to avoid PATH issues in tmux sessions.
+- **tmuxAttach modes** — outside tmux: `spawn("tmux attach")` which keeps the event loop free; inside tmux (`$TMUX` set): `switch-client` + polls `has-session` every 500ms until session ends (switch-client exits immediately, so naive Promise resolution would trigger cleanup too early)
 - **Passthrough args** — everything after `--` forwarded to the `claude` command (e.g. `-- --model sonnet`)
 - **TmuxBridge delivery** — state-aware injection via `TmuxBridge.deliver()`; events delivered as plain text (no XML wrapping)
-- **MCP config file** — written to temp directory; passed to `claude --mcp-config <path>`; cleaned up on exit
 - **Cleanup** — stops TmuxBridge, `setup.cleanup()`, kills tmux session, removes temp directory
 
 #### TmuxBridge (`cli/claude/tmux-bridge.ts`)
@@ -521,7 +522,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 #### tmux helpers (`tmux.ts`)
 
 - All functions sanitize session names (`sanitizeSessionName()` replaces `.`, `:`, `$`, `%` with `_`) to prevent tmux target misinterpretation
-- All functions use `execFileSync` (args as array, no shell interpolation); `tmuxAttach` uses `execSync` only because it requires interactive `stdio: inherit`
+- All functions use `execFileSync` (args as array, no shell interpolation)
 - `tmuxAvailable()` — check if tmux is installed
 - `tmuxSessionExists(session)` — check if a session exists
 - `tmuxCreateSession(session)` — create detached session with no status bar
@@ -530,7 +531,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - `tmuxSendEnter(session)` — send Enter key
 - `tmuxCapturePane(session)` — capture visible screen content as array of lines
 - `tmuxSendKey(session, key)` — send a control key sequence (e.g. `C-u`, `C-y`, `Escape`); no `-l` flag so tmux interprets key names
-- `tmuxAttach(session)` — blocking attach (supports nested tmux via `switch-client`)
+- `tmuxAttach(session)` — async attach; outside tmux uses `spawn("tmux attach")` to keep event loop free; inside tmux uses `switch-client` + polls `has-session` until session ends
 - `tmuxKillSession(session)` — kill session (safe if already dead)
 
 #### Agent event delivery
