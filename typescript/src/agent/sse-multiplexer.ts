@@ -75,7 +75,10 @@ export class SseMultiplexer {
 
     while (!signal.aborted && !this._closed) {
       try {
+        // POST required — Cloudflare Quick Tunnels buffer GET streaming
+        // responses and only flush on connection close. POST streams in real-time.
         const res = await fetch(`${serverUrl}/events?token=${sessionToken}`, {
+          method: "POST",
           headers: { Accept: "text/event-stream" },
           signal,
         });

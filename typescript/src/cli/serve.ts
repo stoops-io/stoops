@@ -548,7 +548,9 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     for (const [id, sse] of sseConnections) { sse.end(); sseConnections.delete(id); }
     for (const p of participants.values()) { await p.channel.disconnect().catch(() => {}); }
     for (const o of observers.values()) { await o.channel.disconnect().catch(() => {}); }
-    httpServer.close();
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((err) => (err ? reject(err) : resolve()));
+    });
     process.exit(0);
   };
 

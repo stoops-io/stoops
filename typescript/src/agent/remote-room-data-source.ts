@@ -126,10 +126,11 @@ export class RemoteRoomDataSource implements RoomDataSource {
   async sendMessage(
     content: string,
     replyToId?: string,
-    _image?: { url: string; mimeType: string; sizeBytes: number } | null,
+    image?: { url: string; mimeType: string; sizeBytes: number } | null,
   ): Promise<Message> {
     const body: Record<string, unknown> = { token: this._sessionToken, content };
     if (replyToId) body.replyTo = replyToId;
+    if (image) body.image = image;
 
     const res = await fetch(`${this._serverUrl}/message`, {
       method: "POST",

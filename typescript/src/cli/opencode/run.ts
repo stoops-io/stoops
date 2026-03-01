@@ -104,11 +104,6 @@ export async function runOpencode(options: AgentRuntimeOptions): Promise<void> {
     const data = await res.json() as Record<string, unknown>;
     sessionId = String(data.id ?? (data as any).data?.id ?? "");
     if (!sessionId) {
-      // Try nested response format
-      const nested = (data as any).data;
-      if (nested?.id) sessionId = String(nested.id);
-    }
-    if (!sessionId) {
       console.error("Failed to get session ID from OpenCode.");
       child.kill();
       await setup.cleanup();

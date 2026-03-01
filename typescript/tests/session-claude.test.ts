@@ -68,6 +68,7 @@ describe("ClaudeSession", () => {
     } catch (err) {
       // Expected if SDK not installed — should be an import error
       expect(err).toBeDefined();
+      expect(String(err)).toMatch(/Cannot find module|ERR_MODULE_NOT_FOUND|claude/i);
     }
   });
 });

@@ -27,9 +27,7 @@ import type { ContentPart } from "../agent/types.js";
 
 export interface AgentRuntimeOptions {
   joinUrls?: string[];
-  room?: string;
   name?: string;
-  server?: string;
   admin?: boolean;
   extraArgs?: string[];
 }
@@ -84,14 +82,10 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
       }
       targets.push({ serverUrl, token });
     }
-  } else if (options.room) {
-    // Legacy mode
-    const serverUrl = options.server ?? "http://127.0.0.1:7890";
-    targets.push({ serverUrl, token: null });
   }
 
   if (targets.length === 0) {
-    console.error("No join targets specified. Use --join <url> or --room <name>.");
+    console.error("No join targets specified. Use --join <url>.");
     process.exit(1);
   }
 

@@ -42,7 +42,7 @@ describe("LangGraphSession", () => {
 
   // Integration test — requires LangChain packages AND API keys.
   // Skipped in CI. Run manually with: ANTHROPIC_API_KEY=... npx vitest run -t "start()"
-  test.skip("start() initializes graph with MCP tools (integration)", async () => {
+  test.skipIf(!hasLangChain)("start() initializes graph with MCP tools (integration)", async () => {
     const { createLangGraphSession } = await import("../src/langgraph/session.js");
     const { Room } = await import("../src/core/room.js");
     const room = new Room("test");
