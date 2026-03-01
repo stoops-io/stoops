@@ -4,6 +4,7 @@ import { describe, test, expect, beforeEach } from "vitest";
 import { Room } from "../src/core/room.js";
 import type { Channel } from "../src/core/channel.js";
 import type { RoomConnection, RoomResolver } from "../src/agent/types.js";
+import { LocalRoomDataSource } from "../src/agent/room-data-source.js";
 import {
   resolveOrError,
   textResult,
@@ -29,7 +30,7 @@ function makeResolver(connections: Map<string, RoomConnection>): RoomResolver {
         name: conn.name,
         roomId,
         mode: "everyone",
-        participantCount: conn.room.listParticipants().length,
+        participantCount: conn.dataSource.listParticipants().length,
       }));
     },
   };
@@ -37,9 +38,10 @@ function makeResolver(connections: Map<string, RoomConnection>): RoomResolver {
 
 async function setupRoom(): Promise<{ room: Room; channel: Channel; conn: RoomConnection }> {
   const room = new Room("test-room");
-  const channel = await room.connect("user1", "Alice", "human");
-  await room.connect("stoop1", "Quinn", "stoop");
-  const conn: RoomConnection = { room, channel, name: "Kitchen" };
+  const channel = await room.connect("user1", "Alice", { type: "human" });
+  await room.connect("stoop1", "Quinn", { type: "agent" });
+  const dataSource = new LocalRoomDataSource(room, channel);
+  const conn: RoomConnection = { dataSource, room, channel, name: "Kitchen" };
   return { room, channel, conn };
 }
 
@@ -160,8 +162,89 @@ describe("handleSearchByText", () => {
   });
 });
 
+describe("handleSearchByMessage", () => {
+  test("returns context before anchor", async () => {
+    const { conn, channel } = await setupRoom();
+    const connections = new Map([["test-room", conn]]);
+    const resolver = makeResolver(connections);
+
+    await channel.sendMessage("first");
+    await channel.sendMessage("second");
+    const anchor = await channel.sendMessage("third");
+
+    const refMap = new Map<string, string>();
+    const result = await handleSearchByMessage(
+      resolver,
+      { room: "Kitchen", ref: anchor.id, direction: "before", count: 5 },
+      { assignRef: (id) => { const r = String(refMap.size + 1); refMap.set(r, id); return r; }, resolveRef: (ref) => refMap.get(ref) ?? ref },
+    );
+    expect(result.content[0].text).toContain("Context in [Kitchen]");
+    expect(result.content[0].text).toContain("←"); // anchor marker
+  });
+
+  test("returns context after anchor", async () => {
+    const { conn, channel } = await setupRoom();
+    const connections = new Map([["test-room", conn]]);
+    const resolver = makeResolver(connections);
+
+    const anchor = await channel.sendMessage("first");
+    await channel.sendMessage("second");
+    await channel.sendMessage("third");
+
+    const result = await handleSearchByMessage(
+      resolver,
+      { room: "Kitchen", ref: anchor.id, direction: "after", count: 5 },
+      {},
+    );
+    expect(result.content[0].text).toContain("Context in [Kitchen]");
+    expect(result.content[0].text).toContain("second");
+    expect(result.content[0].text).toContain("third");
+  });
+
+  test("resolves #ref via resolveRef", async () => {
+    const { conn, channel } = await setupRoom();
+    const connections = new Map([["test-room", conn]]);
+    const resolver = makeResolver(connections);
+
+    const anchor = await channel.sendMessage("target");
+
+    const result = await handleSearchByMessage(
+      resolver,
+      { room: "Kitchen", ref: "#9999" },
+      { resolveRef: (ref) => ref === "9999" ? anchor.id : undefined },
+    );
+    expect(result.content[0].text).toContain("Context in [Kitchen]");
+  });
+
+  test("returns error for unknown anchor", async () => {
+    const { conn } = await setupRoom();
+    const connections = new Map([["test-room", conn]]);
+    const resolver = makeResolver(connections);
+
+    const result = await handleSearchByMessage(
+      resolver,
+      { room: "Kitchen", ref: "nonexistent-id" },
+      {},
+    );
+    expect(result.content[0].text).toContain("not found");
+  });
+
+  test("returns error for unknown room", async () => {
+    const { conn } = await setupRoom();
+    const connections = new Map([["test-room", conn]]);
+    const resolver = makeResolver(connections);
+
+    const result = await handleSearchByMessage(
+      resolver,
+      { room: "Nope", ref: "abc" },
+      {},
+    );
+    expect(result.content[0].text).toContain("Unknown room");
+  });
+});
+
 describe("handleSendMessage", () => {
-  test("sends a message and returns JSON", async () => {
+  test("sends a message and returns confirmation", async () => {
     const { conn } = await setupRoom();
     const connections = new Map([["test-room", conn]]);
     const resolver = makeResolver(connections);
@@ -171,9 +254,7 @@ describe("handleSendMessage", () => {
       { room: "Kitchen", content: "Hello from handler" },
       {},
     );
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.content).toBe("Hello from handler");
-    expect(parsed.sender_name).toBe("Alice");
+    expect(result.content[0].text).toContain("Message sent");
   });
 
   test("resolves reply ref", async () => {
@@ -188,8 +269,12 @@ describe("handleSendMessage", () => {
       { room: "Kitchen", content: "reply", reply_to_id: "#abc" },
       { resolveRef: (ref) => ref === "abc" ? msg.id : undefined },
     );
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.reply_to_id).toBe(msg.id);
+    // Verify the message was sent — the result is a confirmation string now
+    expect(result.content[0].text).toContain("Message sent");
+
+    // Verify the reply was actually linked by checking the last message in storage
+    const messages = await conn.room.storage.getMessages(conn.room.roomId, 1, null);
+    expect(messages.items[0].reply_to_id).toBe(msg.id);
   });
 });
 

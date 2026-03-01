@@ -56,10 +56,23 @@ export const MessageSchema = z.object({
 
 export type Message = z.infer<typeof MessageSchema>;
 
+// ── Authority ────────────────────────────────────────────────────────────────
+
+/**
+ * Authority level — what a participant is allowed to do.
+ *
+ * - `admin`       — full control: kick, set others' modes, generate share links
+ * - `participant` — can send messages, set own mode
+ * - `observer`    — read-only: can catch up and search, but can't send or act
+ *
+ * Set on join, doesn't change during the session. Orthogonal to engagement mode.
+ */
+export type AuthorityLevel = "admin" | "participant" | "observer";
+
 // ── Participant ───────────────────────────────────────────────────────────────
 
 /** Whether a participant is a human or an agent. */
-export type ParticipantType = "human" | "stoop";
+export type ParticipantType = "human" | "agent";
 
 /**
  * A participant in a room.
@@ -67,12 +80,13 @@ export type ParticipantType = "human" | "stoop";
  * - `id`         — stable unique ID across all rooms and sessions
  * - `name`       — display name (mutable — participants can rename)
  * - `status`     — current presence status ("online", "offline", etc.)
- * - `type`       — "human" or "stoop" (agent)
- * - `identifier` — optional stable @-mention slug, e.g. "quinn".
+ * - `type`       — "human" or "agent"
+ * - `identifier` — optional stable @-mention slug, e.g. "my-agent".
  *                  Unlike `name`, this never changes on rename.
  *                  Used for @-mention matching in addition to the display name.
  *                  Not all participants have one — guests and anonymous users
  *                  typically don't.
+ * - `authority`  — optional authority level. Defaults to "participant" if unset.
  */
 export interface Participant {
   id: string;
@@ -80,6 +94,7 @@ export interface Participant {
   status: string;
   type: ParticipantType;
   identifier?: string;
+  authority?: AuthorityLevel;
 }
 
 // ── Pagination ────────────────────────────────────────────────────────────────

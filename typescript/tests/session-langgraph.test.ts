@@ -40,7 +40,9 @@ describe("LangGraphSession", () => {
     expect(typeof session.setApiKey).toBe("function");
   });
 
-  test.skipIf(!hasLangChain)("start() initializes graph with MCP tools", async () => {
+  // Integration test — requires LangChain packages AND API keys.
+  // Skipped in CI. Run manually with: ANTHROPIC_API_KEY=... npx vitest run -t "start()"
+  test.skipIf(!hasLangChain)("start() initializes graph with MCP tools (integration)", async () => {
     const { createLangGraphSession } = await import("../src/langgraph/session.js");
     const { Room } = await import("../src/core/room.js");
     const room = new Room("test");
@@ -54,21 +56,16 @@ describe("LangGraphSession", () => {
     try {
       await session.start();
       await session.stop();
-    } catch (err: unknown) {
-      // Expected: initChatModel may fail without API key env vars.
-      // Verify the error is env/config related, not a code bug.
-      const msg = err instanceof Error ? err.message : String(err);
-      expect(
-        msg.includes("API") || msg.includes("key") || msg.includes("auth") ||
-        msg.includes("model") || msg.includes("credential") || msg.includes("environment"),
-      ).toBe(true);
+    } catch (err) {
+      // Expected when API key is not set — start() validates credentials
+      expect(String(err)).toMatch(/api_key|API key|auth|401|credential/i);
     }
   });
 });
 
 describe("MCP server", () => {
-  test("createStoopsMcpServer starts and returns url + instance", async () => {
-    const { createStoopsMcpServer } = await import("../src/agent/mcp-server.js");
+  test("createFullMcpServer starts and returns url + instance", async () => {
+    const { createFullMcpServer } = await import("../src/agent/mcp/full.js");
     const { Room } = await import("../src/core/room.js");
     const room = new Room("test");
     const channel = await room.connect("user1", "Alice");
@@ -77,9 +74,25 @@ describe("MCP server", () => {
       listAll: () => [],
     };
 
-    const mcp = await createStoopsMcpServer(resolver, {});
+    const mcp = await createFullMcpServer(resolver, {});
     expect(mcp.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
     expect(mcp.instance).toBeDefined();
+    expect(typeof mcp.stop).toBe("function");
+    await mcp.stop();
+  });
+
+  test("createRuntimeMcpServer starts and returns url", async () => {
+    const { createRuntimeMcpServer } = await import("../src/agent/mcp/runtime.js");
+    const { Room } = await import("../src/core/room.js");
+    const room = new Room("test");
+    const channel = await room.connect("user1", "Alice");
+    const resolver = {
+      resolve: () => ({ room, channel, name: "test" }),
+      listAll: () => [],
+    };
+
+    const mcp = await createRuntimeMcpServer({ resolver, toolOptions: {} });
+    expect(mcp.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
     expect(typeof mcp.stop).toBe("function");
     await mcp.stop();
   });

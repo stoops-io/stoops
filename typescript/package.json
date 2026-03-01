@@ -1,6 +1,6 @@
 {
   "name": "stoops",
-  "version": "0.3.0",
+  "version": "0.4.1-beta.0",
   "description": "Shared rooms for AI agents",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,6 +8,9 @@
   "bin": {
     "stoops": "./dist/cli/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -37,6 +40,8 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "ink": "^6.8.0",
+    "react": "^19.2.4",
     "uuid": "^11.0.0",
     "zod": "^4.0.0"
   },
@@ -50,6 +55,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.3",
+    "@types/react": "^19.2.14",
     "@types/uuid": "^10.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",

@@ -5,9 +5,9 @@
  * Uses a custom StateGraph with inject/agent/tools nodes.
  */
 
-import type { RoomResolver, LLMSessionOptions, ILLMSession, ContentPart, LLMQueryStats, QueryTurn } from "../agent/types.js";
+import type { RoomResolver, LangGraphSessionOptions, ILLMSession, ContentPart, QueryTurn } from "../agent/types.js";
 import { contentPartsToString } from "../agent/prompts.js";
-import { createStoopsMcpServer, type StoopsMcpServer } from "../agent/mcp-server.js";
+import { createFullMcpServer, type StoopsMcpServer } from "../agent/mcp/index.js";
 
 // ── Token pricing table (approximate, USD per 1M tokens) ─────────────────────
 // Last updated: 2026-02. Add new models as they launch.
@@ -40,14 +40,14 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 };
 
 function estimateCost(modelName: string, inputTokens: number, outputTokens: number): number {
-  const bare = modelName.includes(":") ? modelName.split(":")[1] : modelName;
+  const bare = modelName.includes(":") ? modelName.split(":").pop()! : modelName;
   const pricing = TOKEN_PRICING[bare];
   if (!pricing) return 0;
   return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
 }
 
 function getContextWindow(modelName: string): number {
-  const bare = modelName.includes(":") ? modelName.split(":")[1] : modelName;
+  const bare = modelName.includes(":") ? modelName.split(":").pop()! : modelName;
   return MODEL_CONTEXT_WINDOWS[bare] ?? 200_000;
 }
 
@@ -55,10 +55,12 @@ export class LangGraphSession implements ILLMSession {
   private _systemPrompt: string;
   private _resolver: RoomResolver;
   private _model: string;
-  private _options: LLMSessionOptions;
+  private _options: LangGraphSessionOptions;
   private _threadId: string;
   private _processing = false;
   private _mcpServer: StoopsMcpServer | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _mcpClient: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private _graph: any = null;
 
@@ -66,7 +68,7 @@ export class LangGraphSession implements ILLMSession {
     systemPrompt: string,
     resolver: RoomResolver,
     model: string,
-    options: LLMSessionOptions = {},
+    options: LangGraphSessionOptions = {},
   ) {
     this._systemPrompt = systemPrompt;
     this._resolver = resolver;
@@ -87,7 +89,7 @@ export class LangGraphSession implements ILLMSession {
     }
 
     // Start the shared stoops MCP server
-    this._mcpServer = await createStoopsMcpServer(this._resolver, {
+    this._mcpServer = await createFullMcpServer(this._resolver, {
       isEventSeen: this._options.isEventSeen,
       markEventsSeen: this._options.markEventsSeen,
       assignRef: this._options.assignRef,
@@ -97,9 +99,8 @@ export class LangGraphSession implements ILLMSession {
     const mcpUrl = this._mcpServer.url;
 
     const { StateGraph, MemorySaver, MessagesValue, START, END } = await import("@langchain/langgraph");
-    const { StateSchema, ReducedValue } = await import("@langchain/langgraph");
+    const { StateSchema } = await import("@langchain/langgraph");
     const { initChatModel } = await import("langchain/chat_models/universal");
-    const { z } = await import("zod");
     const { ToolNode } = await import("@langchain/langgraph/prebuilt");
     const { MultiServerMCPClient } = await import("@langchain/mcp-adapters");
 
@@ -115,11 +116,11 @@ export class LangGraphSession implements ILLMSession {
         },
       },
     };
-    const mcpClient = new MultiServerMCPClient(
+    this._mcpClient = new MultiServerMCPClient(
       mcpConfig as unknown as ConstructorParameters<typeof MultiServerMCPClient>[0],
     );
 
-    const tools = await mcpClient.getTools();
+    const tools = await this._mcpClient.getTools();
 
     const llm = await initChatModel(this._model, {
       temperature: 0,
@@ -129,10 +130,6 @@ export class LangGraphSession implements ILLMSession {
 
     const AgentState = new StateSchema({
       messages: MessagesValue,
-      injectedParts: new ReducedValue(
-        z.array(z.string()).default(() => []),
-        { reducer: (_current: string[], update: string[]) => update },
-      ),
     });
 
     const options = this._options;
@@ -140,9 +137,9 @@ export class LangGraphSession implements ILLMSession {
     // inject node: drains mid-loop event buffer between tool rounds.
     // Events are already pre-formatted by the runtime (timestamps, room labels,
     // participant icons) — we just extract the text from ContentPart[].
-    const injectNode = async (state: { messages: unknown[]; injectedParts: string[] }) => {
+    const injectNode = async (state: { messages: unknown[] }) => {
       const drained = options.drainEventQueue?.();
-      if (!drained || drained.length === 0) return { injectedParts: [] };
+      if (!drained || drained.length === 0) return {};
       const { HumanMessage } = await import("@langchain/core/messages");
       const lines = ["While you were responding, this happened:\n"];
       for (const parts of drained) {
@@ -150,10 +147,7 @@ export class LangGraphSession implements ILLMSession {
           if (part.type === "text") lines.push(part.text);
         }
       }
-      return {
-        messages: [new HumanMessage({ content: lines.join("\n") })],
-        injectedParts: [],
-      };
+      return { messages: [new HumanMessage({ content: lines.join("\n") })] };
     };
 
     const agentNode = async (state: { messages: unknown[] }) => {
@@ -191,6 +185,8 @@ export class LangGraphSession implements ILLMSession {
   }
 
   async stop(): Promise<void> {
+    try { await this._mcpClient?.close?.(); } catch { /* best effort */ }
+    this._mcpClient = null;
     await this._mcpServer?.stop();
     this._mcpServer = null;
     this._graph = null;
@@ -222,7 +218,8 @@ export class LangGraphSession implements ILLMSession {
       }
 
       const state = await this._graph.getState({ configurable: { thread_id: this._threadId } });
-      const isFirstInvocation = !state?.values?.messages?.length;
+      const existingMessageCount = state?.values?.messages?.length ?? 0;
+      const isFirstInvocation = existingMessageCount === 0;
 
       const inputMessages: unknown[] = [];
       if (isFirstInvocation) {
@@ -235,7 +232,9 @@ export class LangGraphSession implements ILLMSession {
         { configurable: { thread_id: this._threadId } },
       );
 
-      const resultMessages = result.messages ?? [];
+      const allMessages = result.messages ?? [];
+      // Only count new messages from this invocation (skip historical ones)
+      const resultMessages = allMessages.slice(existingMessageCount);
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       let numTurns = 0;
@@ -255,7 +254,7 @@ export class LangGraphSession implements ILLMSession {
             turns.push({ type: "tool_use", tool: tc.name, content: tc.args });
           }
         }
-        if (msg?.constructor?.name === "ToolMessage" || msg?.role === "tool") {
+        if (msg?.role === "tool" || msg?._getType?.() === "tool") {
           turns.push({ type: "tool_result", tool: msg.name ?? "unknown", content: msg.content });
         }
       }
@@ -310,7 +309,7 @@ export function createLangGraphSession(
   systemPrompt: string,
   resolver: RoomResolver,
   model: string,
-  options: LLMSessionOptions,
+  options: LangGraphSessionOptions,
 ): ILLMSession {
   return new LangGraphSession(systemPrompt, resolver, model, options);
 }

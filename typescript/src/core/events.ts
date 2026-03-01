@@ -119,7 +119,7 @@ export interface StatusChangedEvent extends BaseRoomEvent {
   room_id: string;
   participant_id: string;
   timestamp: Date;
-  status: string;
+  status: "online" | "offline" | "away";
 }
 
 // ── ACTIVITY category ─────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ export interface ToolUseEvent extends BaseRoomEvent {
   timestamp: Date;
   tool_name: string;
   /** "started" before the call, "completed" after. */
-  status: string;
+  status: "started" | "completed";
 }
 
 /**
@@ -190,7 +190,7 @@ export interface ContextCompactedEvent extends BaseRoomEvent {
  * the sender. The sender is in `message.sender_id`.
  *
  * @mention detection is case-insensitive and matches on both `identifier`
- * (e.g. `@quinn`) and display `name` (e.g. `@Quinn`).
+ * (e.g. `@my-agent`) and display `name` (e.g. `@Alice`).
  *
  * Agents in standby modes wake up on this event type only.
  */

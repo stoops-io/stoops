@@ -1,6 +1,6 @@
 /** stoops/core — Chat server with typed events and channels. */
 
-export { EventCategory, MessageSchema, type Message, type Participant, type PaginatedResult } from "./types.js";
+export { EventCategory, MessageSchema, type AuthorityLevel, type Message, type Participant, type PaginatedResult } from "./types.js";
 export {
   type RoomEvent,
   type MessageSentEvent,
@@ -16,7 +16,10 @@ export {
   type MentionedEvent,
   type ContextCompactedEvent,
   createEvent,
+  EVENT_ROLE,
+  type EventRole,
 } from "./events.js";
-export { type StorageProtocol, InMemoryStorage, paginate, paginateByIndex } from "./storage.js";
+export { type StorageProtocol, InMemoryStorage } from "./storage.js";
 export { Channel } from "./channel.js";
 export { Room } from "./room.js";
+export { randomName, randomRoomName } from "./names.js";

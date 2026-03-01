@@ -1,12 +1,18 @@
 /** Claude Agent SDK session backend for stoops agents. */
 
 import { tmpdir } from "node:os";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { RoomResolver, LLMSessionOptions, ILLMSession } from "../agent/types.js";
-import type { ContentPart } from "../agent/types.js";
+import type { RoomResolver, ClaudeSessionOptions, ILLMSession, ContentPart } from "../agent/types.js";
 import { contentPartsToString } from "../agent/prompts.js";
-import { createStoopsMcpServer, type StoopsMcpServer } from "../agent/mcp-server.js";
+import { createFullMcpServer, type StoopsMcpServer } from "../agent/mcp/index.js";
+
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  "claude-haiku-4-5-20251001":  200_000,
+  "claude-sonnet-4-5-20250929": 200_000,
+  "claude-opus-4-5-20250918":   200_000,
+  "claude-opus-4-5-20250929":   200_000,
+};
 
 async function loadSDK() {
   return import("@anthropic-ai/claude-agent-sdk");
@@ -21,13 +27,13 @@ export class ClaudeSession implements ILLMSession {
   private _resolver: RoomResolver;
   private _model: string;
   private _processing = false;
-  private _options: LLMSessionOptions;
+  private _options: ClaudeSessionOptions;
 
   constructor(
     systemPrompt: string,
     resolver: RoomResolver,
     model = "claude-sonnet-4-5-20250929",
-    options: LLMSessionOptions = {},
+    options: ClaudeSessionOptions = {},
   ) {
     this._systemPrompt = systemPrompt;
     this._resolver = resolver;
@@ -38,7 +44,7 @@ export class ClaudeSession implements ILLMSession {
 
   async start(): Promise<void> {
     this._sdk = await loadSDK();
-    this._mcpServer = await createStoopsMcpServer(this._resolver, {
+    this._mcpServer = await createFullMcpServer(this._resolver, {
       isEventSeen: this._options.isEventSeen,
       markEventsSeen: this._options.markEventsSeen,
       assignRef: this._options.assignRef,
@@ -51,6 +57,7 @@ export class ClaudeSession implements ILLMSession {
     this._mcpServer = null;
     this._sdk = null;
     this._sessionId = null;
+    try { rmSync(this._cwd, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 
   setApiKey(key: string): void {
@@ -63,6 +70,7 @@ export class ClaudeSession implements ILLMSession {
 
     this._processing = true;
     const inputForTrace = contentPartsToString(parts);
+    const turns: import("../agent/types.js").QueryTurn[] = [];
 
     try {
       const sdk = this._sdk;
@@ -70,23 +78,22 @@ export class ClaudeSession implements ILLMSession {
       const onContextCompacted = this._options.onContextCompacted;
       const identity = this._options.identity;
       const resolver = this._resolver;
-      const turns: import("../agent/types.js").QueryTurn[] = [];
 
       // Use in-process SDK server type — zero HTTP overhead
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mcpServers: Record<string, any> = {
-        stoops_tools: {
+        stoops: {
           type: "sdk",
-          name: "stoops_tools",
+          name: "stoops",
           instance: this._mcpServer.instance,
         },
       };
 
       const allowedTools = [
-        "mcp__stoops_tools__catch_up",
-        "mcp__stoops_tools__search_by_text",
-        "mcp__stoops_tools__search_by_message",
-        "mcp__stoops_tools__send_message",
+        "mcp__stoops__catch_up",
+        "mcp__stoops__search_by_text",
+        "mcp__stoops__search_by_message",
+        "mcp__stoops__send_message",
       ];
 
       const options: Parameters<typeof sdk.query>[0]["options"] = {
@@ -99,19 +106,17 @@ export class ClaudeSession implements ILLMSession {
         hooks: {
           PreToolUse: [{
             hooks: [async (input) => {
-              const raw = input as Record<string, unknown>;
-              const toolName = (raw.tool_name as string | undefined) || "unknown";
+              const toolName = ("tool_name" in input ? input.tool_name : undefined) || "unknown";
               onToolUse?.(toolName, "started");
-              turns.push({ type: "tool_use", tool: toolName, content: raw.tool_input ?? null });
+              turns.push({ type: "tool_use", tool: toolName, content: "tool_input" in input ? input.tool_input : null });
               return { decision: "approve" as const };
             }],
           }],
           PostToolUse: [{
             hooks: [async (input) => {
-              const raw = input as Record<string, unknown>;
-              const toolName = (raw.tool_name as string | undefined) || "unknown";
+              const toolName = ("tool_name" in input ? input.tool_name : undefined) || "unknown";
               onToolUse?.(toolName, "completed");
-              turns.push({ type: "tool_result", tool: toolName, content: raw.tool_response ?? raw.output ?? null });
+              turns.push({ type: "tool_result", tool: toolName, content: "tool_response" in input ? input.tool_response : null });
               return {};
             }],
           }],
@@ -171,33 +176,25 @@ export class ClaudeSession implements ILLMSession {
       }
 
       for await (const msg of response) {
-        if (msg.type === "system" && "subtype" in msg && msg.subtype === "init") {
+        if (msg.type === "system" && msg.subtype === "init") {
           this._sessionId = msg.session_id;
         }
         if (msg.type === "result") {
           if (this._options.onQueryComplete) {
-            const r = msg as Record<string, unknown>;
-            const usage = r.usage as Record<string, number> | undefined;
-            const inputTokens = usage?.input_tokens ?? 0;
-            const cacheReadInputTokens = usage?.cache_read_input_tokens ?? 0;
-            const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-              "claude-haiku-4-5-20251001": 200_000,
-              "claude-sonnet-4-5-20250929": 200_000,
-              "claude-opus-4-5-20250918": 200_000,
-              "claude-opus-4-5-20250929": 200_000,
-            };
+            const inputTokens = msg.usage.input_tokens ?? 0;
+            const cacheReadInputTokens = msg.usage.cache_read_input_tokens ?? 0;
             const contextWindow = MODEL_CONTEXT_WINDOWS[this._model] ?? 200_000;
             const contextPct = Math.max(0, Math.min(100, Math.round(((inputTokens + cacheReadInputTokens) / contextWindow) * 100)));
             this._options.onQueryComplete({
-              totalCostUsd: (r.total_cost_usd as number) ?? 0,
-              durationMs: (r.duration_ms as number) ?? 0,
-              durationApiMs: (r.duration_api_ms as number) ?? 0,
-              numTurns: (r.num_turns as number) ?? 0,
+              totalCostUsd: msg.total_cost_usd ?? 0,
+              durationMs: msg.duration_ms ?? 0,
+              durationApiMs: msg.duration_api_ms ?? 0,
+              numTurns: msg.num_turns ?? 0,
               inputTokens,
-              outputTokens: usage?.output_tokens ?? 0,
+              outputTokens: msg.usage.output_tokens ?? 0,
               cacheReadInputTokens,
-              cacheCreationInputTokens: usage?.cache_creation_input_tokens ?? 0,
-              isError: (r.is_error as boolean) ?? false,
+              cacheCreationInputTokens: msg.usage.cache_creation_input_tokens ?? 0,
+              isError: msg.is_error ?? false,
               contextPct,
               input: inputForTrace,
               turns,
@@ -206,6 +203,24 @@ export class ClaudeSession implements ILLMSession {
           break;
         }
       }
+    } catch (err) {
+      if (this._options.onQueryComplete) {
+        this._options.onQueryComplete({
+          totalCostUsd: 0,
+          durationMs: 0,
+          durationApiMs: 0,
+          numTurns: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          isError: true,
+          contextPct: 0,
+          input: inputForTrace,
+          turns,
+        });
+      }
+      throw err;
     } finally {
       this._processing = false;
     }
@@ -217,7 +232,7 @@ export function createClaudeSession(
   systemPrompt: string,
   resolver: RoomResolver,
   model: string,
-  options: LLMSessionOptions,
+  options: ClaudeSessionOptions,
 ): ILLMSession {
   return new ClaudeSession(systemPrompt, resolver, model, options);
 }

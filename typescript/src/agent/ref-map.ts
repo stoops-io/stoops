@@ -36,8 +36,17 @@ export class RefMap {
 
     if (this._refToId.has(ref)) {
       // Wrap-around (>10000 assignments without compaction — rare in practice).
-      // Fall back to hex-derived ref.
-      const fallback = messageId.replace(/-/g, "").slice(0, 4);
+      // Fall back to hex-derived ref, checking for collisions.
+      const hex = messageId.replace(/-/g, "");
+      let fallback: string | null = null;
+      for (let i = 0; i <= hex.length - 4; i++) {
+        const candidate = hex.slice(i, i + 4);
+        if (!this._refToId.has(candidate)) {
+          fallback = candidate;
+          break;
+        }
+      }
+      if (!fallback) fallback = messageId.slice(0, 8);
       this._refToId.set(fallback, messageId);
       this._idToRef.set(messageId, fallback);
       return fallback;

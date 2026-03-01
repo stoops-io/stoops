@@ -18,13 +18,13 @@
  * Active modes (agent evaluates on matching messages):
  * - "everyone"  — all messages trigger evaluation
  * - "people"    — only messages from human participants trigger evaluation
- * - "stoops"    — only messages from other agents trigger evaluation
+ * - "agents"    — only messages from other agents trigger evaluation
  * - "me"        — only messages from the agent's designated owner ("person") trigger
  *
  * Standby modes (agent only wakes on @mentions):
  * - "standby-everyone" — any @mention wakes the agent
  * - "standby-people"   — only @mentions from humans wake the agent
- * - "standby-stoops"   — only @mentions from other agents wake the agent
+ * - "standby-agents"   — only @mentions from other agents wake the agent
  * - "standby-me"       — only an @mention from the agent's owner wakes them
  *
  * # Classification rules (in order)
@@ -80,7 +80,7 @@ export interface EngagementStrategy {
    * @param event      — the room event to classify
    * @param roomId     — the room the event came from
    * @param selfId     — the agent's own participant ID (to drop self-events)
-   * @param senderType — "human" or "stoop" for the event's sender
+   * @param senderType — "human" or "agent" for the event's sender
    * @param senderId   — participant ID of the sender. For `Mentioned` events,
    *                     pass `event.message.sender_id` (who wrote the mention),
    *                     not `event.participant_id` (who was mentioned).
@@ -122,8 +122,8 @@ export interface EngagementStrategy {
 // ── Built-in modes ────────────────────────────────────────────────────────────
 
 export type EngagementMode =
-  | "me" | "people" | "stoops" | "everyone"
-  | "standby-me" | "standby-people" | "standby-stoops" | "standby-everyone";
+  | "me" | "people" | "agents" | "everyone"
+  | "standby-me" | "standby-people" | "standby-agents" | "standby-everyone";
 
 // ── Core classification logic (shared) ────────────────────────────────────────
 
@@ -136,7 +136,7 @@ function senderMatches(
   switch (filter) {
     case "everyone": return true;
     case "people":   return senderType === "human";
-    case "stoops":   return senderType === "stoop";
+    case "agents":   return senderType === "agent";
     case "me":       return !!personParticipantId && senderId === personParticipantId;
     default:         return false;
   }
@@ -196,7 +196,7 @@ function classify(
 /**
  * StoopsEngagement — the built-in engagement strategy.
  *
- * Implements the 8-mode system: 4 active modes (everyone/people/stoops/me)
+ * Implements the 8-mode system: 4 active modes (everyone/people/agents/me)
  * and 4 standby modes that only wake on @mentions. Maintains per-room mode
  * state internally.
  *

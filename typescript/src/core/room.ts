@@ -27,12 +27,12 @@
  * const room = new Room("room-1", storage);
  *
  * const aliceChannel = await room.connect("alice-id", "Alice");
- * const quinChannel  = await room.connect("quin-id", "Quin", "stoop", "quin");
+ * const agentChannel = await room.connect("agent-id", "Agent", "agent", "my-agent");
  * const observer     = room.observe();
  *
- * await aliceChannel.sendMessage("hey @quin what do you think?");
+ * await aliceChannel.sendMessage("hey @my-agent what do you think?");
  * // → MessageSentEvent broadcast to all participants + observer
- * // → MentionedEvent delivered to quinChannel + observer
+ * // → MentionedEvent delivered to agentChannel + observer
  */
 
 import { Channel } from "./channel.js";
@@ -45,7 +45,7 @@ import type {
   RoomEvent,
 } from "./events.js";
 import { InMemoryStorage, type StorageProtocol } from "./storage.js";
-import { EventCategory, type Message, type PaginatedResult, type Participant, type ParticipantType } from "./types.js";
+import { EventCategory, type AuthorityLevel, type Message, type PaginatedResult, type Participant, type ParticipantType } from "./types.js";
 
 const ALL_CATEGORIES = new Set<EventCategory>([
   EventCategory.MESSAGE,
@@ -74,31 +74,35 @@ export class Room {
 
   /**
    * Connect a participant and return their channel.
-   *
-   * @param participantId — stable unique ID for this participant
-   * @param name          — display name (shown in messages and events)
-   * @param type          — "human" (default) or "stoop" (agent)
-   * @param identifier    — optional stable @-mention slug (e.g. "quinn").
-   *                        Used for @-mention matching alongside the display name.
-   *                        Unlike name, this should never change.
-   * @param subscribe     — event categories to receive; defaults to all four
-   * @param silent        — if true, suppresses the `ParticipantJoined` broadcast.
-   *                        Use this for agents, observers, and reconnections where
-   *                        you don't want to announce the join in chat.
    */
   async connect(
     participantId: string,
     name: string,
-    type: ParticipantType = "human",
-    identifier?: string,
-    subscribe?: Set<EventCategory>,
-    silent = false,
+    options?: {
+      type?: ParticipantType;
+      identifier?: string;
+      subscribe?: Set<EventCategory>;
+      silent?: boolean;
+      authority?: AuthorityLevel;
+    },
   ): Promise<Channel> {
+    const type = options?.type ?? "human";
+    const identifier = options?.identifier;
+    const subscribe = options?.subscribe;
+    const silent = options?.silent ?? false;
+    const authority = options?.authority;
     const participant: Participant = {
       id: participantId, name, status: "online", type,
       ...(identifier ? { identifier } : {}),
+      ...(authority ? { authority } : {}),
     };
     this._participants.set(participantId, participant);
+
+    // If already connected, disconnect the old channel first
+    const existingChannel = this._channels.get(participantId);
+    if (existingChannel) {
+      existingChannel._markDisconnected();
+    }
 
     const subscriptions = subscribe ?? new Set(ALL_CATEGORIES);
     const channel = new Channel(this, participantId, name, subscriptions);
@@ -282,7 +286,7 @@ export class Room {
 
   /**
    * Scan message content for `@token` patterns and return matching participant IDs.
-   * Matches against both `identifier` (e.g. `@quinn`) and display `name` (e.g. `@Quinn`).
+   * Matches against both `identifier` (e.g. `@my-agent`) and display `name` (e.g. `@Alice`).
    * Case-insensitive. Deduplicates — each participant appears at most once.
    */
   private _detectMentions(content: string): string[] {

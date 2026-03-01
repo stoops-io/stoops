@@ -13,11 +13,11 @@ import type {
   ParticipantLeftEvent,
 } from "../src/core/events.js";
 
-const SELF = "stoop_quinn";
+const SELF = "agent_quinn";
 const HUMAN_ID = "user_human";
-const PERSON_ID = "user_person"; // stoop's person (owner)
+const PERSON_ID = "user_person"; // agent's person (owner)
 const OTHER_HUMAN = "user_other";
-const OTHER_STOOP = "stoop_ash";
+const OTHER_AGENT = "agent_ash";
 
 const BASE = { room_id: "test" };
 
@@ -110,15 +110,15 @@ describe("standby-everyone mode", () => {
   });
 
   test("Mentioned to other → drop", () => {
-    expect(classifyEvent(makeMentioned(OTHER_STOOP, HUMAN_ID), "standby-everyone", SELF, "human", HUMAN_ID)).toBe("drop");
+    expect(classifyEvent(makeMentioned(OTHER_AGENT, HUMAN_ID), "standby-everyone", SELF, "human", HUMAN_ID)).toBe("drop");
   });
 
   test("MessageSent from human → drop", () => {
     expect(classifyEvent(makeMessage(HUMAN_ID), "standby-everyone", SELF, "human", HUMAN_ID)).toBe("drop");
   });
 
-  test("MessageSent from stoop → drop", () => {
-    expect(classifyEvent(makeMessage(OTHER_STOOP), "standby-everyone", SELF, "stoop", OTHER_STOOP)).toBe("drop");
+  test("MessageSent from agent → drop", () => {
+    expect(classifyEvent(makeMessage(OTHER_AGENT), "standby-everyone", SELF, "agent", OTHER_AGENT)).toBe("drop");
   });
 
   test("ParticipantJoined → drop", () => {
@@ -133,8 +133,8 @@ describe("people mode", () => {
     expect(classifyEvent(makeMessage(HUMAN_ID), "people", SELF, "human", HUMAN_ID)).toBe("trigger");
   });
 
-  test("stoop MessageSent → content", () => {
-    expect(classifyEvent(makeMessage(OTHER_STOOP), "people", SELF, "stoop", OTHER_STOOP)).toBe("content");
+  test("agent MessageSent → content", () => {
+    expect(classifyEvent(makeMessage(OTHER_AGENT), "people", SELF, "agent", OTHER_AGENT)).toBe("content");
   });
 
   test("Mentioned to self → drop (dedup)", () => {
@@ -158,7 +158,7 @@ describe("people mode", () => {
   });
 
   test("own MessageSent → drop", () => {
-    expect(classifyEvent(makeMessage(SELF), "people", SELF, "stoop", SELF)).toBe("drop");
+    expect(classifyEvent(makeMessage(SELF), "people", SELF, "agent", SELF)).toBe("drop");
   });
 });
 
@@ -173,8 +173,8 @@ describe("me mode", () => {
     expect(classifyEvent(makeMessage(OTHER_HUMAN), "me", SELF, "human", OTHER_HUMAN, PERSON_ID)).toBe("content");
   });
 
-  test("stoop MessageSent → content", () => {
-    expect(classifyEvent(makeMessage(OTHER_STOOP), "me", SELF, "stoop", OTHER_STOOP, PERSON_ID)).toBe("content");
+  test("agent MessageSent → content", () => {
+    expect(classifyEvent(makeMessage(OTHER_AGENT), "me", SELF, "agent", OTHER_AGENT, PERSON_ID)).toBe("content");
   });
 
   test("Mentioned to self → drop (dedup)", () => {
@@ -198,7 +198,7 @@ describe("me mode", () => {
   });
 
   test("own MessageSent → drop", () => {
-    expect(classifyEvent(makeMessage(SELF), "me", SELF, "stoop", SELF, PERSON_ID)).toBe("drop");
+    expect(classifyEvent(makeMessage(SELF), "me", SELF, "agent", SELF, PERSON_ID)).toBe("drop");
   });
 });
 
@@ -209,8 +209,8 @@ describe("everyone mode", () => {
     expect(classifyEvent(makeMessage(HUMAN_ID), "everyone", SELF, "human", HUMAN_ID)).toBe("trigger");
   });
 
-  test("MessageSent from stoop → trigger", () => {
-    expect(classifyEvent(makeMessage(OTHER_STOOP), "everyone", SELF, "stoop", OTHER_STOOP)).toBe("trigger");
+  test("MessageSent from agent → trigger", () => {
+    expect(classifyEvent(makeMessage(OTHER_AGENT), "everyone", SELF, "agent", OTHER_AGENT)).toBe("trigger");
   });
 
   test("Mentioned to self → drop (dedup)", () => {
@@ -234,50 +234,50 @@ describe("everyone mode", () => {
   });
 
   test("own MessageSent → drop", () => {
-    expect(classifyEvent(makeMessage(SELF), "everyone", SELF, "stoop", SELF)).toBe("drop");
+    expect(classifyEvent(makeMessage(SELF), "everyone", SELF, "agent", SELF)).toBe("drop");
   });
 });
 
-// --- stoops mode ---
+// --- agents mode ---
 
-describe("stoops mode", () => {
-  test("stoop MessageSent → trigger", () => {
-    expect(classifyEvent(makeMessage(OTHER_STOOP), "stoops", SELF, "stoop", OTHER_STOOP)).toBe("trigger");
+describe("agents mode", () => {
+  test("agent MessageSent → trigger", () => {
+    expect(classifyEvent(makeMessage(OTHER_AGENT), "agents", SELF, "agent", OTHER_AGENT)).toBe("trigger");
   });
 
   test("human MessageSent → content", () => {
-    expect(classifyEvent(makeMessage(HUMAN_ID), "stoops", SELF, "human", HUMAN_ID)).toBe("content");
+    expect(classifyEvent(makeMessage(HUMAN_ID), "agents", SELF, "human", HUMAN_ID)).toBe("content");
   });
 
   test("Mentioned to self → drop (dedup)", () => {
-    expect(classifyEvent(makeMentioned(SELF, HUMAN_ID), "stoops", SELF, "human", HUMAN_ID)).toBe("drop");
+    expect(classifyEvent(makeMentioned(SELF, HUMAN_ID), "agents", SELF, "human", HUMAN_ID)).toBe("drop");
   });
 
   test("ParticipantJoined → content (ambient)", () => {
-    expect(classifyEvent(makeJoined(HUMAN_ID), "stoops", SELF, "human", HUMAN_ID)).toBe("content");
+    expect(classifyEvent(makeJoined(HUMAN_ID), "agents", SELF, "human", HUMAN_ID)).toBe("content");
   });
 
   test("ParticipantLeft → content (ambient)", () => {
-    expect(classifyEvent(makeLeft(HUMAN_ID), "stoops", SELF, "human", HUMAN_ID)).toBe("content");
+    expect(classifyEvent(makeLeft(HUMAN_ID), "agents", SELF, "human", HUMAN_ID)).toBe("content");
   });
 
   test("ReactionAdded → content (ambient)", () => {
-    expect(classifyEvent(makeReaction(HUMAN_ID), "stoops", SELF, "human", HUMAN_ID)).toBe("content");
+    expect(classifyEvent(makeReaction(HUMAN_ID), "agents", SELF, "human", HUMAN_ID)).toBe("content");
   });
 
   test("ContextCompacted → content", () => {
-    const event = createEvent<{ type: "ContextCompacted"; category: "ACTIVITY"; room_id: string; participant_id: string; participant: { id: string; name: string; status: string; type: "human" | "stoop" } }>({
+    const event = createEvent<{ type: "ContextCompacted"; category: "ACTIVITY"; room_id: string; participant_id: string; participant: { id: string; name: string; status: string; type: "human" | "agent" } }>({
       type: "ContextCompacted",
       category: "ACTIVITY",
       ...BASE,
       participant_id: HUMAN_ID,
       participant: { id: HUMAN_ID, name: "Human", status: "online", type: "human" },
     });
-    expect(classifyEvent(event as any, "stoops", SELF, "human", HUMAN_ID)).toBe("content");
+    expect(classifyEvent(event as any, "agents", SELF, "human", HUMAN_ID)).toBe("content");
   });
 
   test("own MessageSent → drop", () => {
-    expect(classifyEvent(makeMessage(SELF), "stoops", SELF, "stoop", SELF)).toBe("drop");
+    expect(classifyEvent(makeMessage(SELF), "agents", SELF, "agent", SELF)).toBe("drop");
   });
 });
 
@@ -292,12 +292,12 @@ describe("standby-me mode", () => {
     expect(classifyEvent(makeMentioned(SELF, OTHER_HUMAN), "standby-me", SELF, "human", OTHER_HUMAN, PERSON_ID)).toBe("drop");
   });
 
-  test("Mentioned to self from stoop → drop", () => {
-    expect(classifyEvent(makeMentioned(SELF, OTHER_STOOP), "standby-me", SELF, "stoop", OTHER_STOOP, PERSON_ID)).toBe("drop");
+  test("Mentioned to self from agent → drop", () => {
+    expect(classifyEvent(makeMentioned(SELF, OTHER_AGENT), "standby-me", SELF, "agent", OTHER_AGENT, PERSON_ID)).toBe("drop");
   });
 
   test("Mentioned to other (not self) from person → drop", () => {
-    expect(classifyEvent(makeMentioned(OTHER_STOOP, PERSON_ID), "standby-me", SELF, "human", PERSON_ID, PERSON_ID)).toBe("drop");
+    expect(classifyEvent(makeMentioned(OTHER_AGENT, PERSON_ID), "standby-me", SELF, "human", PERSON_ID, PERSON_ID)).toBe("drop");
   });
 
   test("MessageSent from person → drop", () => {
@@ -316,12 +316,12 @@ describe("standby-people mode", () => {
     expect(classifyEvent(makeMentioned(SELF, HUMAN_ID), "standby-people", SELF, "human", HUMAN_ID)).toBe("trigger");
   });
 
-  test("Mentioned to self from stoop → drop", () => {
-    expect(classifyEvent(makeMentioned(SELF, OTHER_STOOP), "standby-people", SELF, "stoop", OTHER_STOOP)).toBe("drop");
+  test("Mentioned to self from agent → drop", () => {
+    expect(classifyEvent(makeMentioned(SELF, OTHER_AGENT), "standby-people", SELF, "agent", OTHER_AGENT)).toBe("drop");
   });
 
   test("Mentioned to other (not self) from human → drop", () => {
-    expect(classifyEvent(makeMentioned(OTHER_STOOP, HUMAN_ID), "standby-people", SELF, "human", HUMAN_ID)).toBe("drop");
+    expect(classifyEvent(makeMentioned(OTHER_AGENT, HUMAN_ID), "standby-people", SELF, "human", HUMAN_ID)).toBe("drop");
   });
 
   test("MessageSent from human → drop", () => {
@@ -329,23 +329,23 @@ describe("standby-people mode", () => {
   });
 });
 
-// --- standby-stoops mode ---
+// --- standby-agents mode ---
 
-describe("standby-stoops mode", () => {
-  test("Mentioned to self from stoop → trigger", () => {
-    expect(classifyEvent(makeMentioned(SELF, OTHER_STOOP), "standby-stoops", SELF, "stoop", OTHER_STOOP)).toBe("trigger");
+describe("standby-agents mode", () => {
+  test("Mentioned to self from agent → trigger", () => {
+    expect(classifyEvent(makeMentioned(SELF, OTHER_AGENT), "standby-agents", SELF, "agent", OTHER_AGENT)).toBe("trigger");
   });
 
   test("Mentioned to self from human → drop", () => {
-    expect(classifyEvent(makeMentioned(SELF, HUMAN_ID), "standby-stoops", SELF, "human", HUMAN_ID)).toBe("drop");
+    expect(classifyEvent(makeMentioned(SELF, HUMAN_ID), "standby-agents", SELF, "human", HUMAN_ID)).toBe("drop");
   });
 
-  test("Mentioned to other (not self) from stoop → drop", () => {
-    expect(classifyEvent(makeMentioned(OTHER_STOOP, OTHER_STOOP), "standby-stoops", SELF, "stoop", OTHER_STOOP)).toBe("drop");
+  test("Mentioned to other (not self) from agent → drop", () => {
+    expect(classifyEvent(makeMentioned(OTHER_AGENT, OTHER_AGENT), "standby-agents", SELF, "agent", OTHER_AGENT)).toBe("drop");
   });
 
-  test("MessageSent from stoop → drop", () => {
-    expect(classifyEvent(makeMessage(OTHER_STOOP), "standby-stoops", SELF, "stoop", OTHER_STOOP)).toBe("drop");
+  test("MessageSent from agent → drop", () => {
+    expect(classifyEvent(makeMessage(OTHER_AGENT), "standby-agents", SELF, "agent", OTHER_AGENT)).toBe("drop");
   });
 });
 
@@ -385,8 +385,8 @@ describe("StoopsEngagement", () => {
     const eng = new StoopsEngagement("everyone");
     // everyone mode: human message → trigger
     expect(eng.classify(makeMessage(HUMAN_ID), "room-1", SELF, "human", HUMAN_ID)).toBe("trigger");
-    // everyone mode: stoop message → trigger
-    expect(eng.classify(makeMessage(OTHER_STOOP), "room-1", SELF, "stoop", OTHER_STOOP)).toBe("trigger");
+    // everyone mode: agent message → trigger
+    expect(eng.classify(makeMessage(OTHER_AGENT), "room-1", SELF, "agent", OTHER_AGENT)).toBe("trigger");
   });
 
   test("classify with personParticipantId in standby-me", () => {
@@ -401,9 +401,9 @@ describe("StoopsEngagement", () => {
     const eng = new StoopsEngagement("people");
     eng.setMode("room-1", "everyone");
     eng.setMode("room-2", "me");
-    // room-1 (everyone): stoop message → trigger
-    expect(eng.classify(makeMessage(OTHER_STOOP), "room-1", SELF, "stoop", OTHER_STOOP)).toBe("trigger");
-    // room-2 (me without person): stoop message → content
-    expect(eng.classify(makeMessage(OTHER_STOOP), "room-2", SELF, "stoop", OTHER_STOOP)).toBe("content");
+    // room-1 (everyone): agent message → trigger
+    expect(eng.classify(makeMessage(OTHER_AGENT), "room-1", SELF, "agent", OTHER_AGENT)).toBe("trigger");
+    // room-2 (me without person): agent message → content
+    expect(eng.classify(makeMessage(OTHER_AGENT), "room-2", SELF, "agent", OTHER_AGENT)).toBe("content");
   });
 });

@@ -134,6 +134,18 @@ export class Channel {
     }
   }
 
+  /** @internal Called by Room to mark this channel as disconnected without removing from room maps. */
+  _markDisconnected(): void {
+    if (!this._disconnected) {
+      this._disconnected = true;
+      const waiters = this._waiters;
+      this._waiters = [];
+      for (const w of waiters) {
+        w.reject(new Error("Channel disconnected"));
+      }
+    }
+  }
+
   /** @internal Called by Room to deliver an incoming event. Filters by subscription. */
   _deliver(event: RoomEvent): void {
     if (this._disconnected) return;

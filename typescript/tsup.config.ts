@@ -6,13 +6,20 @@ export default defineConfig({
     "src/agent/index.ts",
     "src/claude/index.ts",
     "src/langgraph/index.ts",
+    "src/cli/index.ts",
   ],
   format: ["esm"],
   dts: true,
   sourcemap: true,
   clean: true,
   target: "es2022",
+  esbuildOptions(options) {
+    options.jsx = "automatic";
+  },
   external: [
+    // TUI deps — CLI-only, kept external so library consumers don't pull them in
+    "ink",
+    "react",
     // LangChain — optional deps, not bundled
     "@langchain/core",
     "@langchain/core/tools",
