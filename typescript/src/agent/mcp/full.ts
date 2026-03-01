@@ -41,6 +41,7 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
     "catch_up",
     "Catch up on recent activity in a room. Returns unseen events.",
     { room: z.string().describe("Name of the room to catch up on") },
+    { readOnlyHint: true },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async ({ room }: { room: string }) => handleCatchUp(resolver, { room }, options) as any,
   );
@@ -55,6 +56,7 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
         .describe("Number of matches to return (default 3)"),
       cursor: z.string().optional().describe("Pagination cursor from a previous search"),
     },
+    { readOnlyHint: true },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (args: any) => handleSearchByText(resolver, args, options) as any,
   );
@@ -70,6 +72,7 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
       count: z.number().int().min(1).max(50).default(10).optional()
         .describe("Number of messages to return (not counting anchor, default 10)"),
     },
+    { readOnlyHint: true },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (args: any) => handleSearchByMessage(resolver, args, options) as any,
   );
@@ -79,7 +82,7 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
     "Send a message to a room.",
     {
       room: z.string().describe("Name of the room to send to"),
-      content: z.string().describe("Message content"),
+      content: z.string().describe("Message content. @name will notify that participant — use sparingly."),
       reply_to_id: z.string().optional()
         .describe("Message ref to reply to (e.g. #3847)."),
       image_url: z.string().url().optional().describe("URL of an image to attach"),
@@ -87,6 +90,7 @@ function registerTools(server: any, resolver: RoomResolver, options: ToolHandler
       image_size_bytes: z.number().int().positive().optional()
         .describe("Size of the image in bytes"),
     },
+    { readOnlyHint: false, destructiveHint: false },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (args: any) => handleSendMessage(resolver, args, options) as any,
   );

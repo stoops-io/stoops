@@ -38,8 +38,8 @@ function makeResolver(connections: Map<string, RoomConnection>): RoomResolver {
 
 async function setupRoom(): Promise<{ room: Room; channel: Channel; conn: RoomConnection }> {
   const room = new Room("test-room");
-  const channel = await room.connect("user1", "Alice", "human");
-  await room.connect("stoop1", "Quinn", "agent");
+  const channel = await room.connect("user1", "Alice", { type: "human" });
+  await room.connect("stoop1", "Quinn", { type: "agent" });
   const dataSource = new LocalRoomDataSource(room, channel);
   const conn: RoomConnection = { dataSource, room, channel, name: "Kitchen" };
   return { room, channel, conn };

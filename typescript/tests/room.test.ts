@@ -32,7 +32,7 @@ async function drain(channel: Channel, timeout = 50): Promise<RoomEvent[]> {
 describe("connect / disconnect", () => {
   test("connect returns channel", async () => {
     const room = new Room("test");
-    const ch = await room.connect("alice", "Alice", "human");
+    const ch = await room.connect("alice", "Alice", { type: "human" });
     expect(ch).toBeInstanceOf(Channel);
     expect(ch.participantId).toBe("alice");
     expect(ch.roomId).toBe("test");
@@ -47,29 +47,29 @@ describe("connect / disconnect", () => {
 
   test("connect as stoop sets type", async () => {
     const room = new Room("test");
-    await room.connect("quinn", "Quinn", "agent");
+    await room.connect("quinn", "Quinn", { type: "agent" });
     const participants = room.listParticipants();
     expect(participants[0].type).toBe("agent");
   });
 
   test("connect with identifier stores it on participant", async () => {
     const room = new Room("test");
-    await room.connect("quinn", "Quinn", "agent", "quinn");
+    await room.connect("quinn", "Quinn", { type: "agent", identifier: "quinn" });
     const participants = room.listParticipants();
     expect(participants[0].identifier).toBe("quinn");
   });
 
   test("connect without identifier leaves identifier undefined", async () => {
     const room = new Room("test");
-    await room.connect("alice", "Alice", "human");
+    await room.connect("alice", "Alice", { type: "human" });
     const participants = room.listParticipants();
     expect(participants[0].identifier).toBeUndefined();
   });
 
   test("connect broadcasts ParticipantJoined with correct type", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human");
-    await room.connect("quinn", "Quinn", "agent");
+    const chA = await room.connect("alice", "Alice", { type: "human" });
+    await room.connect("quinn", "Quinn", { type: "agent" });
 
     // Alice should receive Quinn's ParticipantJoinedEvent
     const events = await drain(chA);
@@ -82,8 +82,8 @@ describe("connect / disconnect", () => {
 
   test("joiner does not receive own join event", async () => {
     const room = new Room("test");
-    await room.connect("alice", "Alice", "human");
-    const chB = await room.connect("bob", "Bob", "human");
+    await room.connect("alice", "Alice", { type: "human" });
+    const chB = await room.connect("bob", "Bob", { type: "human" });
 
     // Bob should NOT receive his own join event
     const events = await drain(chB);
@@ -110,8 +110,8 @@ describe("connect / disconnect", () => {
 describe("silent connect / disconnect", () => {
   test("silent connect does not broadcast ParticipantJoined", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human");
-    await room.connect("agent", "StoopBot", "agent", undefined, undefined, true);
+    const chA = await room.connect("alice", "Alice", { type: "human" });
+    await room.connect("agent", "StoopBot", { type: "agent", silent: true });
 
     // Alice should NOT receive ParticipantJoined for StoopBot
     const events = await drain(chA);
@@ -120,8 +120,8 @@ describe("silent connect / disconnect", () => {
 
   test("silent disconnect does not broadcast ParticipantLeft", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human");
-    const chB = await room.connect("agent", "StoopBot", "agent", undefined, undefined, true);
+    const chA = await room.connect("alice", "Alice", { type: "human" });
+    const chB = await room.connect("agent", "StoopBot", { type: "agent", silent: true });
     await drain(chA); // clear any events
 
     await chB.disconnect(true);
@@ -132,8 +132,8 @@ describe("silent connect / disconnect", () => {
 
   test("non-silent connect still broadcasts ParticipantJoined", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human");
-    await room.connect("bob", "Bob", "human", undefined, undefined, false);
+    const chA = await room.connect("alice", "Alice", { type: "human" });
+    await room.connect("bob", "Bob", { type: "human" });
 
     const events = await drain(chA);
     expect(events).toHaveLength(1);
@@ -225,13 +225,11 @@ describe("messages", () => {
 describe("subscription filtering", () => {
   test("ghost only gets mentions", async () => {
     const room = new Room("test");
-    const chHuman = await room.connect("human", "Human", "human");
+    const chHuman = await room.connect("human", "Human", { type: "human" });
     const chGhost = await room.connect(
       "ghost",
       "Ghost",
-      "agent",
-      undefined,
-      new Set([EventCategory.MENTION]),
+      { type: "agent", subscribe: new Set([EventCategory.MENTION]) },
     );
     await drain(chHuman);
     await drain(chGhost);
@@ -250,13 +248,11 @@ describe("subscription filtering", () => {
 
   test("listen mode gets messages but not activity", async () => {
     const room = new Room("test");
-    const chHuman = await room.connect("human", "Human", "human");
+    const chHuman = await room.connect("human", "Human", { type: "human" });
     const chListener = await room.connect(
       "listener",
       "Listener",
-      "agent",
-      undefined,
-      new Set([EventCategory.MESSAGE, EventCategory.MENTION]),
+      { type: "agent", subscribe: new Set([EventCategory.MESSAGE, EventCategory.MENTION]) },
     );
     await drain(chHuman);
     await drain(chListener);
@@ -313,13 +309,11 @@ describe("emit activity events", () => {
 describe("update subscriptions", () => {
   test("switch from ghost to engaged", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human");
+    const chA = await room.connect("alice", "Alice", { type: "human" });
     const chB = await room.connect(
       "bob",
       "Bob",
-      "agent",
-      undefined,
-      new Set([EventCategory.MENTION]),
+      { type: "agent", subscribe: new Set([EventCategory.MENTION]) },
     );
     await drain(chA);
     await drain(chB);
@@ -379,8 +373,8 @@ describe("mention detection", () => {
 
   test("@identifier finds participant", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human", "alice");
-    const chB = await room.connect("bob-id", "Robert", "human", "bob");
+    const chA = await room.connect("alice", "Alice", { type: "human", identifier: "alice" });
+    const chB = await room.connect("bob-id", "Robert", { type: "human", identifier: "bob" });
     await drain(chA);
     await drain(chB);
 
@@ -408,8 +402,8 @@ describe("mention detection", () => {
 
   test("no double-mention when identifier matches name lowercased", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human", "alice");
-    const chB = await room.connect("bob-id", "quinn", "agent", "quinn");
+    const chA = await room.connect("alice", "Alice", { type: "human", identifier: "alice" });
+    const chB = await room.connect("bob-id", "quinn", { type: "agent", identifier: "quinn" });
     await drain(chA);
     await drain(chB);
 
@@ -423,8 +417,8 @@ describe("mention detection", () => {
 
   test("@identifier supports hyphenated handles", async () => {
     const room = new Room("test");
-    const chA = await room.connect("alice", "Alice", "human", "alice");
-    const chB = await room.connect("guest-1", "Guest One", "human", "guest-1");
+    const chA = await room.connect("alice", "Alice", { type: "human", identifier: "alice" });
+    const chB = await room.connect("guest-1", "Guest One", { type: "human", identifier: "guest-1" });
     await drain(chA);
     await drain(chB);
 

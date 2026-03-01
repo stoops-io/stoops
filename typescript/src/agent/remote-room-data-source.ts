@@ -15,12 +15,20 @@ import type { RoomDataSource } from "./room-data-source.js";
 
 export class RemoteRoomDataSource implements RoomDataSource {
   private _participants: Participant[] = [];
+  private _selfId = "";
+  private _selfName = "";
 
   constructor(
     private _serverUrl: string,
     private _sessionToken: string,
     private _roomId: string,
   ) {}
+
+  /** Set own identity for populating outgoing message stubs. */
+  setSelf(id: string, name: string): void {
+    this._selfId = id;
+    this._selfName = name;
+  }
 
   get roomId(): string {
     return this._roomId;
@@ -145,12 +153,12 @@ export class RemoteRoomDataSource implements RoomDataSource {
 
     const data = (await res.json()) as { ok: boolean; messageId: string };
 
-    // Return a minimal Message object — the full message will arrive via SSE
+    // Return a stub — the full message will arrive via SSE
     return {
       id: data.messageId,
       room_id: this._roomId,
-      sender_id: "",
-      sender_name: "",
+      sender_id: this._selfId,
+      sender_name: this._selfName,
       content,
       timestamp: new Date(),
     } as Message;

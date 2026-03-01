@@ -132,7 +132,10 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     // when the connection closes. POST streams in real-time. (cloudflared#1449)
     // https://github.com/cloudflare/cloudflared/issues/1449
     if (url.pathname === "/events" && (req.method === "GET" || req.method === "POST")) {
-      const sessionToken = url.searchParams.get("token");
+      const authHeader = req.headers.authorization;
+      const sessionToken = authHeader?.startsWith("Bearer ")
+        ? authHeader.slice(7)
+        : null;
       const session = getSession(sessionToken);
 
       if (!session) {
@@ -302,7 +305,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
 
         // admin or participant — connect as a real participant
         const id = `${participantType}_${randomUUID().slice(0, 8)}`;
-        const channel = await room.connect(id, name, participantType, undefined, undefined, false, authority);
+        const channel = await room.connect(id, name, { type: participantType, authority });
         const sessionToken = tokens.createSessionToken(id, authority);
 
         participants.set(sessionToken, { id, name, authority, channel, sessionToken });

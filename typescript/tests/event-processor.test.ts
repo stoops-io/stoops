@@ -62,7 +62,7 @@ function textOf(parts: ContentPart[]): string {
  * Returns the channel so we can send messages from the human side.
  */
 async function addHuman(room: Room, id = "human-1", name = "Alice") {
-  return room.connect(id, name, "human");
+  return room.connect(id, name, { type: "human" });
 }
 
 /** Small delay to let async event propagation settle. */
@@ -406,7 +406,7 @@ describe("content buffering", () => {
     const room = makeRoom();
 
     const humanCh = await addHuman(room, "human-1", "Alice");
-    const agentCh = await room.connect("stoop-1", "Bot", "agent");
+    const agentCh = await room.connect("stoop-1", "Bot", { type: "agent" });
 
     await proc.connectRoom(room, "lobby", "people");
     const collector = makeDeliveryCollector();
@@ -441,8 +441,8 @@ describe("content buffering", () => {
     const room2 = makeRoom("room-2");
 
     const humanCh1 = await addHuman(room1, "human-1", "Alice");
-    const agentCh1 = await room1.connect("stoop-1", "Bot1", "agent");
-    const agentCh2 = await room2.connect("stoop-2", "Bot2", "agent");
+    const agentCh1 = await room1.connect("stoop-1", "Bot1", { type: "agent" });
+    const agentCh2 = await room2.connect("stoop-2", "Bot2", { type: "agent" });
 
     await proc.connectRoom(room1, "lobby", "people");
     await proc.connectRoom(room2, "lounge", "people");
@@ -789,7 +789,7 @@ describe("engagement classification end-to-end", () => {
     const proc = makeProcessor({ defaultMode: "people" });
     const room = makeRoom();
     const humanCh = await addHuman(room, "human-1", "Alice");
-    const agentCh = await room.connect("stoop-1", "OtherBot", "agent");
+    const agentCh = await room.connect("stoop-1", "OtherBot", { type: "agent" });
 
     await proc.connectRoom(room, "lobby", "people");
     const collector = makeDeliveryCollector();

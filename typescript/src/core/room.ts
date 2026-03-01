@@ -74,28 +74,23 @@ export class Room {
 
   /**
    * Connect a participant and return their channel.
-   *
-   * @param participantId — stable unique ID for this participant
-   * @param name          — display name (shown in messages and events)
-   * @param type          — "human" (default) or "agent"
-   * @param identifier    — optional stable @-mention slug (e.g. "my-agent").
-   *                        Used for @-mention matching alongside the display name.
-   *                        Unlike name, this should never change.
-   * @param subscribe     — event categories to receive; defaults to all four
-   * @param silent        — if true, suppresses the `ParticipantJoined` broadcast.
-   *                        Use this for agents, observers, and reconnections where
-   *                        you don't want to announce the join in chat.
-   * @param authority     — optional authority level; defaults to "participant"
    */
   async connect(
     participantId: string,
     name: string,
-    type: ParticipantType = "human",
-    identifier?: string,
-    subscribe?: Set<EventCategory>,
-    silent = false,
-    authority?: AuthorityLevel,
+    options?: {
+      type?: ParticipantType;
+      identifier?: string;
+      subscribe?: Set<EventCategory>;
+      silent?: boolean;
+      authority?: AuthorityLevel;
+    },
   ): Promise<Channel> {
+    const type = options?.type ?? "human";
+    const identifier = options?.identifier;
+    const subscribe = options?.subscribe;
+    const silent = options?.silent ?? false;
+    const authority = options?.authority;
     const participant: Participant = {
       id: participantId, name, status: "online", type,
       ...(identifier ? { identifier } : {}),

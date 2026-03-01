@@ -36,8 +36,10 @@ export type ContentPart =
  */
 export interface RoomConnection {
   dataSource: RoomDataSource;
-  room: Room;
-  channel: Channel;
+  /** Present for local (app-path) rooms; absent for remote rooms. */
+  room?: Room;
+  /** Present for local (app-path) rooms; absent for remote rooms. */
+  channel?: Channel;
   name: string;
 }
 

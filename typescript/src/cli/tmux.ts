@@ -5,12 +5,17 @@
  * inject room events into Claude Code sessions.
  */
 
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+
+/** Sanitize a string for use as a tmux session name. Replaces tmux-special chars. */
+function sanitizeSessionName(name: string): string {
+  return name.replace(/[.:$%]/g, "_");
+}
 
 /** Check if tmux is installed and available. */
 export function tmuxAvailable(): boolean {
   try {
-    execSync("tmux -V", { stdio: "ignore" });
+    execFileSync("tmux", ["-V"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -20,7 +25,8 @@ export function tmuxAvailable(): boolean {
 /** Check if a tmux session exists. */
 export function tmuxSessionExists(session: string): boolean {
   try {
-    execSync(`tmux has-session -t ${shellEscape(session)}`, { stdio: "ignore" });
+    const name = sanitizeSessionName(session);
+    execFileSync("tmux", ["has-session", "-t", name], { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -29,15 +35,16 @@ export function tmuxSessionExists(session: string): boolean {
 
 /** Create a detached tmux session with no status bar. */
 export function tmuxCreateSession(session: string): void {
-  execSync(`tmux new-session -d -s ${shellEscape(session)}`);
-  execSync(`tmux set -t ${shellEscape(session)} status off`);
+  const name = sanitizeSessionName(session);
+  execFileSync("tmux", ["new-session", "-d", "-s", name]);
+  execFileSync("tmux", ["set", "-t", name, "status", "off"]);
 }
 
 /** Send a command to a tmux session (types it + presses Enter). */
 export function tmuxSendCommand(session: string, command: string): void {
-  // Use execFileSync to avoid shell injection — pass text via tmux's -l flag
-  execFileSync("tmux", ["send-keys", "-t", session, "-l", command]);
-  execFileSync("tmux", ["send-keys", "-t", session, "Enter"]);
+  const name = sanitizeSessionName(session);
+  execFileSync("tmux", ["send-keys", "-t", name, "-l", command]);
+  execFileSync("tmux", ["send-keys", "-t", name, "Enter"]);
 }
 
 /**
@@ -45,28 +52,33 @@ export function tmuxSendCommand(session: string, command: string): void {
  * Used for room event injection.
  */
 export function tmuxInjectText(session: string, text: string): void {
-  execFileSync("tmux", ["send-keys", "-t", session, "-l", text]);
+  const name = sanitizeSessionName(session);
+  execFileSync("tmux", ["send-keys", "-t", name, "-l", text]);
 }
 
 /** Send Enter key to a tmux session (submits input). */
 export function tmuxSendEnter(session: string): void {
-  execFileSync("tmux", ["send-keys", "-t", session, "Enter"]);
+  const name = sanitizeSessionName(session);
+  execFileSync("tmux", ["send-keys", "-t", name, "Enter"]);
 }
 
 /** Attach to a tmux session (blocks until detach or session ends). */
 export function tmuxAttach(session: string): void {
+  const name = sanitizeSessionName(session);
   // If already inside tmux, use switch-client instead of attach (attach refuses when nested).
   if (process.env.TMUX) {
-    execSync(`tmux switch-client -t ${shellEscape(session)}`, { stdio: "inherit" });
+    // switch-client requires stdio: inherit and shell for interactive use
+    execSync(`tmux switch-client -t '${name.replace(/'/g, "'\\''")}'`, { stdio: "inherit" });
   } else {
-    execSync(`tmux attach -t ${shellEscape(session)}`, { stdio: "inherit" });
+    execSync(`tmux attach -t '${name.replace(/'/g, "'\\''")}'`, { stdio: "inherit" });
   }
 }
 
 /** Capture visible screen content as array of lines. */
 export function tmuxCapturePane(session: string): string[] {
   try {
-    const output = execFileSync("tmux", ["capture-pane", "-t", session, "-p"], {
+    const name = sanitizeSessionName(session);
+    const output = execFileSync("tmux", ["capture-pane", "-t", name, "-p"], {
       encoding: "utf-8",
     });
     return output.split("\n");
@@ -81,19 +93,16 @@ export function tmuxCapturePane(session: string): string[] {
  * the key name rather than treating it as literal text.
  */
 export function tmuxSendKey(session: string, key: string): void {
-  execFileSync("tmux", ["send-keys", "-t", session, key]);
+  const name = sanitizeSessionName(session);
+  execFileSync("tmux", ["send-keys", "-t", name, key]);
 }
 
 /** Kill a tmux session. */
 export function tmuxKillSession(session: string): void {
   try {
-    execSync(`tmux kill-session -t ${shellEscape(session)}`, { stdio: "ignore" });
+    const name = sanitizeSessionName(session);
+    execFileSync("tmux", ["kill-session", "-t", name], { stdio: "ignore" });
   } catch {
     // Session may already be dead
   }
-}
-
-
-function shellEscape(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }

@@ -95,6 +95,7 @@ export class EventProcessor implements RoomResolver {
   // ── Public accessors ────────────────────────────────────────────────────────
 
   get participantId(): string { return this._participantId; }
+  set participantId(id: string) { this._participantId = id; }
   get participantName(): string { return this._participantName; }
   get currentContextRoomId(): string | null { return this._currentContextRoomId; }
 
@@ -156,7 +157,10 @@ export class EventProcessor implements RoomResolver {
         });
         const emitter = conn.dataSource.emitEvent
           ? (e: RoomEvent) => conn.dataSource.emitEvent!(e)
-          : (e: RoomEvent) => conn.channel.emit(e);
+          : conn.channel
+            ? (e: RoomEvent) => conn.channel!.emit(e)
+            : null;
+        if (!emitter) return;
         emitter(event).catch(() => {});
       }
     }
@@ -189,19 +193,17 @@ export class EventProcessor implements RoomResolver {
   ): Promise<void> {
     if (this._registry.has(room.roomId)) return;
 
-    const channel = await room.connect(
-      this._participantId,
-      this._participantName,
-      "agent",
-      this._options.selfIdentifier,
-      new Set([
+    const channel = await room.connect(this._participantId, this._participantName, {
+      type: "agent",
+      identifier: this._options.selfIdentifier,
+      subscribe: new Set([
         EventCategory.MESSAGE,
         EventCategory.PRESENCE,
         EventCategory.ACTIVITY,
         EventCategory.MENTION,
       ]),
-      true, // silent
-    );
+      silent: true,
+    });
 
     const dataSource = new LocalRoomDataSource(room, channel);
     const conn: InternalConnection = { dataSource, room, channel, name: roomName, identifier };
@@ -210,7 +212,7 @@ export class EventProcessor implements RoomResolver {
 
     // Emit initial mode
     const initialMode = this.getModeForRoom(room.roomId);
-    conn.channel.emit(createEvent<ActivityEvent>({
+    channel.emit(createEvent<ActivityEvent>({
       type: "Activity",
       category: "ACTIVITY",
       room_id: room.roomId,
@@ -237,11 +239,8 @@ export class EventProcessor implements RoomResolver {
   ): void {
     if (this._registry.has(dataSource.roomId)) return;
 
-    // Create a stub connection — no room or channel, just the data source
     const conn: InternalConnection = {
       dataSource,
-      room: null as unknown as Room,
-      channel: null as unknown as import("../core/channel.js").Channel,
       name: roomName,
       identifier,
     };
@@ -262,7 +261,7 @@ export class EventProcessor implements RoomResolver {
     if (!conn) return;
 
     this._multiplexer.removeChannel(roomId);
-    await conn.channel.disconnect(true);
+    await conn.channel?.disconnect(true);
     this._registry.remove(roomId);
     this._engagement.onRoomDisconnected?.(roomId);
     this._buffer.delete(roomId);
@@ -278,14 +277,14 @@ export class EventProcessor implements RoomResolver {
     this._engagement.setMode?.(roomId, mode);
     const conn = this._registry.get(roomId);
     if (conn) {
-      conn.channel.emit(createEvent<ActivityEvent>({
+      conn.channel?.emit(createEvent<ActivityEvent>({
         type: "Activity",
         category: "ACTIVITY",
         room_id: roomId,
         participant_id: this._participantId,
         action: "mode_changed",
         detail: { mode },
-      })).catch(() => {});
+      }))?.catch(() => {});
       this._options.onModeChange?.(roomId, conn.name, mode);
     }
   }
@@ -337,7 +336,9 @@ export class EventProcessor implements RoomResolver {
     this._stopped = true;
     this._multiplexer.close();
     await Promise.allSettled(
-      [...this._registry.values()].map((conn) => conn.channel.disconnect(true)),
+      [...this._registry.values()]
+        .filter((conn) => conn.channel)
+        .map((conn) => conn.channel!.disconnect(true)),
     );
     this._registry.clear();
     this._buffer.clear();

@@ -51,8 +51,7 @@ export async function runClaude(options: AgentRuntimeOptions): Promise<void> {
 
   // ── Create tmux session + launch Claude Code ────────────────────────────
 
-  const primaryRoom = setup.joinResults[0].roomName;
-  const tmuxSession = `stoops_${primaryRoom}_${setup.agentName}`;
+  const tmuxSession = `stoops_${setup.agentName}`;
 
   if (tmuxSessionExists(tmuxSession)) {
     tmuxKillSession(tmuxSession);

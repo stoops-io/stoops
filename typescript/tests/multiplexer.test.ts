@@ -39,8 +39,8 @@ async function collectEvents(
 describe("adding channels and receiving labeled events", () => {
   test("events from a single channel are labeled with room ID and name", async () => {
     const room = new Room("room-1");
-    const agentCh = await room.connect("agent", "Agent", "agent");
-    const humanCh = await room.connect("human", "Human", "human");
+    const agentCh = await room.connect("agent", "Agent", { type: "agent" });
+    const humanCh = await room.connect("human", "Human", { type: "human" });
 
     // Drain join events from agentCh
     while ((await agentCh.receive(10)) !== null) {}
@@ -63,8 +63,8 @@ describe("adding channels and receiving labeled events", () => {
 
   test("adding the same roomId twice is ignored", async () => {
     const room = new Room("room-1");
-    const ch1 = await room.connect("agent1", "Agent1", "agent");
-    const ch2 = await room.connect("agent2", "Agent2", "agent");
+    const ch1 = await room.connect("agent1", "Agent1", { type: "agent" });
+    const ch2 = await room.connect("agent2", "Agent2", { type: "agent" });
 
     const mux = new EventMultiplexer();
     mux.addChannel("room-1", "Lobby", ch1);
@@ -72,7 +72,7 @@ describe("adding channels and receiving labeled events", () => {
 
     // Only one channel entry — the second addChannel is a no-op
     // We verify by checking the mux still works with the first channel
-    const humanCh = await room.connect("human", "Human", "human");
+    const humanCh = await room.connect("human", "Human", { type: "human" });
     // Drain join events
     while ((await ch1.receive(10)) !== null) {}
 
@@ -91,8 +91,8 @@ describe("adding channels and receiving labeled events", () => {
 describe("removing a channel stops its events", () => {
   test("events stop after removeChannel", async () => {
     const room = new Room("room-1");
-    const agentCh = await room.connect("agent", "Agent", "agent");
-    const humanCh = await room.connect("human", "Human", "human");
+    const agentCh = await room.connect("agent", "Agent", { type: "agent" });
+    const humanCh = await room.connect("human", "Human", { type: "human" });
 
     // Drain join events
     while ((await agentCh.receive(10)) !== null) {}
@@ -153,7 +153,7 @@ describe("close() terminates the iterator", () => {
 
   test("addChannel after close is ignored", async () => {
     const room = new Room("room-1");
-    const ch = await room.connect("agent", "Agent", "agent");
+    const ch = await room.connect("agent", "Agent", { type: "agent" });
 
     const mux = new EventMultiplexer();
     mux.close();
@@ -169,8 +169,8 @@ describe("close() terminates the iterator", () => {
   test("close aborts all channel listeners", async () => {
     const room1 = new Room("room-1");
     const room2 = new Room("room-2");
-    const ch1 = await room1.connect("agent", "Agent", "agent");
-    const ch2 = await room2.connect("agent", "Agent", "agent");
+    const ch1 = await room1.connect("agent", "Agent", { type: "agent" });
+    const ch2 = await room2.connect("agent", "Agent", { type: "agent" });
 
     const mux = new EventMultiplexer();
     mux.addChannel("room-1", "Lobby", ch1);
@@ -192,10 +192,10 @@ describe("multiple channels interleave events", () => {
     const room1 = new Room("room-1");
     const room2 = new Room("room-2");
 
-    const agentCh1 = await room1.connect("agent", "Agent", "agent");
-    const agentCh2 = await room2.connect("agent", "Agent", "agent");
-    const humanCh1 = await room1.connect("human1", "Human1", "human");
-    const humanCh2 = await room2.connect("human2", "Human2", "human");
+    const agentCh1 = await room1.connect("agent", "Agent", { type: "agent" });
+    const agentCh2 = await room2.connect("agent", "Agent", { type: "agent" });
+    const humanCh1 = await room1.connect("human1", "Human1", { type: "human" });
+    const humanCh2 = await room2.connect("human2", "Human2", { type: "human" });
 
     // Drain join events
     while ((await agentCh1.receive(10)) !== null) {}
@@ -234,12 +234,12 @@ describe("multiple channels interleave events", () => {
     const room2 = new Room("room-2");
     const room3 = new Room("room-3");
 
-    const agentCh1 = await room1.connect("agent", "Agent", "agent");
-    const agentCh2 = await room2.connect("agent", "Agent", "agent");
-    const agentCh3 = await room3.connect("agent", "Agent", "agent");
-    const humanCh1 = await room1.connect("h1", "H1", "human");
-    const humanCh2 = await room2.connect("h2", "H2", "human");
-    const humanCh3 = await room3.connect("h3", "H3", "human");
+    const agentCh1 = await room1.connect("agent", "Agent", { type: "agent" });
+    const agentCh2 = await room2.connect("agent", "Agent", { type: "agent" });
+    const agentCh3 = await room3.connect("agent", "Agent", { type: "agent" });
+    const humanCh1 = await room1.connect("h1", "H1", { type: "human" });
+    const humanCh2 = await room2.connect("h2", "H2", { type: "human" });
+    const humanCh3 = await room3.connect("h3", "H3", { type: "human" });
 
     // Drain join events
     while ((await agentCh1.receive(10)) !== null) {}
@@ -268,10 +268,10 @@ describe("multiple channels interleave events", () => {
     const room1 = new Room("room-1");
     const room2 = new Room("room-2");
 
-    const agentCh1 = await room1.connect("agent", "Agent", "agent");
-    const agentCh2 = await room2.connect("agent", "Agent", "agent");
-    const humanCh1 = await room1.connect("h1", "H1", "human");
-    const humanCh2 = await room2.connect("h2", "H2", "human");
+    const agentCh1 = await room1.connect("agent", "Agent", { type: "agent" });
+    const agentCh2 = await room2.connect("agent", "Agent", { type: "agent" });
+    const humanCh1 = await room1.connect("h1", "H1", { type: "human" });
+    const humanCh2 = await room2.connect("h2", "H2", { type: "human" });
 
     // Drain join events
     while ((await agentCh1.receive(10)) !== null) {}
@@ -298,8 +298,8 @@ describe("multiple channels interleave events", () => {
 
   test("buffered events drain before blocking", async () => {
     const room = new Room("room-1");
-    const agentCh = await room.connect("agent", "Agent", "agent");
-    const humanCh = await room.connect("human", "Human", "human");
+    const agentCh = await room.connect("agent", "Agent", { type: "agent" });
+    const humanCh = await room.connect("human", "Human", { type: "human" });
 
     // Drain join events
     while ((await agentCh.receive(10)) !== null) {}

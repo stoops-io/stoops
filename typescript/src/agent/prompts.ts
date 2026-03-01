@@ -90,6 +90,18 @@ export function contentPartsToString(parts: ContentPart[]): string {
   return parts.map(p => p.type === "text" ? p.text : ` [image: ${p.url}]`).join("");
 }
 
+/** Count visual character width (grapheme clusters) for padding alignment. */
+function visualLength(s: string): number {
+  // Use Intl.Segmenter if available (Node 16+), otherwise fall back to spread
+  if (typeof Intl !== "undefined" && Intl.Segmenter) {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    let count = 0;
+    for (const _ of segmenter.segment(s)) count++;
+    return count;
+  }
+  return [...s].length;
+}
+
 /**
  * Format multiline content with room label continuation.
  * First line is returned as-is. Subsequent lines get [room] prefix aligned.
@@ -98,8 +110,8 @@ function formatMultilineContent(content: string, roomLabel: string | undefined, 
   const lines = content.split("\n");
   if (lines.length <= 1) return content;
   const continuation = roomLabel ? `[${roomLabel}] ` : "";
-  // Pad continuation to align under the content start
-  const pad = " ".repeat(prefix.length);
+  // Pad continuation to align under the content start (grapheme-aware)
+  const pad = " ".repeat(visualLength(prefix));
   return lines[0] + "\n" + lines.slice(1).map(l => `${pad}${continuation}${l}`).join("\n");
 }
 

@@ -7,8 +7,8 @@
  *   stoops [--room <name>] [--port <port>] [--share]                         Host a room + join it
  *   stoops serve [--room <name>] [--port <port>] [--share]                   Headless server only
  *   stoops join <url> [--name <name>] [--guest]                              Join a room as a human
- *   stoops run claude --join <url> [--name <name>] [--admin] [-- <args>]     Connect Claude Code
- *   stoops run opencode --join <url> [--name <name>] [--admin] [-- <args>]   Connect OpenCode
+ *   stoops run claude [--join <url>] [--name <name>] [--admin] [-- <args>]   Connect Claude Code
+ *   stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>] Connect OpenCode
  */
 
 import { serve } from "./serve.js";
@@ -39,8 +39,23 @@ function getAllFlags(name: string, arr: string[] = args): string[] {
   return results;
 }
 
+function printUsage(stream: typeof console.log = console.log): void {
+  stream("Usage:");
+  stream("  stoops [--room <name>] [--port <port>] [--share]                         Host + join");
+  stream("  stoops serve [--room <name>] [--port <port>] [--share]                   Headless server");
+  stream("  stoops join <url> [--name <name>] [--guest]                              Join a room");
+  stream("  stoops run claude [--join <url>] [--name <name>] [--admin] [-- <args>]   Connect Claude Code");
+  stream("  stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>] Connect OpenCode");
+}
+
 async function main(): Promise<void> {
-  // stoops run <runtime> --join <url> [--invite <url>] [--name <name>] [--admin] [-- <extra-args>]
+  // ── --help anywhere ────────────────────────────────────────────────────
+  if (args.includes("--help") || args.includes("-h")) {
+    printUsage();
+    return;
+  }
+
+  // ── stoops run <runtime> ───────────────────────────────────────────────
   if (args[0] === "run" && (args[1] === "claude" || args[1] === "opencode")) {
     const runtime = args[1];
     const restArgs = args.slice(2);
@@ -51,19 +66,10 @@ async function main(): Promise<void> {
     const extraArgs = ddIndex >= 0 ? restArgs.slice(ddIndex + 1) : [];
 
     const joinUrls = getAllFlags("join", stoopsArgs);
-    const room = getFlag("room", stoopsArgs);
-    const server = getFlag("server", stoopsArgs);
-
-    if (joinUrls.length === 0 && !room) {
-      console.error(`Usage: stoops run ${runtime} --join <url> [--name <name>] [--admin] [-- <${runtime}-args>]`);
-      process.exit(1);
-    }
 
     const runtimeOptions = {
-      joinUrls,
-      room,
+      joinUrls: joinUrls.length > 0 ? joinUrls : undefined,
       name: getFlag("name", stoopsArgs),
-      server,
       admin: stoopsArgs.includes("--admin"),
       extraArgs,
     };
@@ -76,7 +82,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // stoops join <url> [--name <name>] [--guest]
+  // ── stoops join <url> ──────────────────────────────────────────────────
   if (args[0] === "join") {
     const server = args[1];
     if (!server || server.startsWith("--")) {
@@ -91,18 +97,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // stoops --help
-  if (args.includes("--help") || args.includes("-h")) {
-    console.log("Usage:");
-    console.log("  stoops [--room <name>] [--port <port>] [--share]                         Host + join");
-    console.log("  stoops serve [--room <name>] [--port <port>] [--share]                   Headless server");
-    console.log("  stoops join <url> [--name <name>] [--guest]                              Join a room");
-    console.log("  stoops run claude --join <url> [--name <name>] [--admin] [-- <args>]     Connect Claude Code");
-    console.log("  stoops run opencode --join <url> [--name <name>] [--admin] [-- <args>]   Connect OpenCode");
-    return;
-  }
-
-  // stoops serve [--room <name>] [--port <port>] [--share]
+  // ── stoops serve ───────────────────────────────────────────────────────
   if (args[0] === "serve") {
     const portStr = getFlag("port");
     await serve({
@@ -113,7 +108,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // stoops [--room <name>] [--port <port>] [--share]  — host + join
+  // ── stoops (bare) — host + join ────────────────────────────────────────
   if (args.length === 0 || args[0]?.startsWith("--")) {
     const portStr = getFlag("port");
     const result = await serve({
@@ -138,15 +133,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Unknown command
-  console.error(`Unknown command: ${args[0]}`);
-  console.error("");
-  console.error("Usage:");
-  console.error("  stoops [--room <name>] [--port <port>] [--share]");
-  console.error("  stoops serve [--room <name>] [--port <port>] [--share]");
-  console.error("  stoops join <url> [--name <name>] [--guest]");
-  console.error("  stoops run claude --join <url> [--name <name>] [--admin] [-- <args>]");
-  console.error("  stoops run opencode --join <url> [--name <name>] [--admin] [-- <args>]");
+  // ── Unknown command ────────────────────────────────────────────────────
+  console.error(`Unknown command: ${args[0]}\n`);
+  printUsage(console.error);
   process.exit(1);
 }
 

@@ -360,9 +360,12 @@ export async function join(options: JoinOptions): Promise<void> {
       sseController = new AbortController();
 
       try {
-        const res = await fetch(`${serverUrl}/events?token=${sessionToken}`, {
+        const res = await fetch(`${serverUrl}/events`, {
           method: "POST",
-          headers: { Accept: "text/event-stream" },
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${sessionToken}`,
+          },
           signal: sseController.signal,
         });
 

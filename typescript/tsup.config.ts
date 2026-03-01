@@ -17,6 +17,9 @@ export default defineConfig({
     options.jsx = "automatic";
   },
   external: [
+    // TUI deps — CLI-only, kept external so library consumers don't pull them in
+    "ink",
+    "react",
     // LangChain — optional deps, not bundled
     "@langchain/core",
     "@langchain/core/tools",

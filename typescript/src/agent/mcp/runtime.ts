@@ -121,6 +121,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
     {
       room: z.string().optional().describe("Room name. Omit to list all connected rooms."),
     },
+    { readOnlyHint: true },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async ({ room }: { room?: string }) => {
       if (!room) {
@@ -151,6 +152,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         .describe("Number of matches (default 3)"),
       cursor: z.string().optional().describe("Pagination cursor"),
     },
+    { readOnlyHint: true },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (args: any) => handleSearchByText(resolver, args, toolOptions) as any,
   );
@@ -167,6 +169,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
       count: z.number().int().min(1).max(50).default(10).optional()
         .describe("Number of messages (default 10)"),
     },
+    { readOnlyHint: true },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (args: any) => handleSearchByMessage(resolver, args, toolOptions) as any,
   );
@@ -177,10 +180,11 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
     "Send a message to a room.",
     {
       room: z.string().describe("Room name"),
-      content: z.string().describe("Message content"),
+      content: z.string().describe("Message content. @name will notify that participant — use sparingly."),
       reply_to_id: z.string().optional()
         .describe("Message ref to reply to (e.g. #3847)."),
     },
+    { readOnlyHint: false, destructiveHint: false },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     async (args: any) => handleSendMessage(resolver, args, toolOptions) as any,
   );
@@ -193,6 +197,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
       room: z.string().describe("Room name"),
       mode: z.string().describe("Engagement mode"),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     async ({ room, mode }: { room: string; mode: string }) => {
       if (!opts.onSetMode) return textResult("Mode changes not supported.");
       const result = await opts.onSetMode(room, mode);
@@ -210,6 +215,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
       url: z.string().describe("Share URL to join"),
       alias: z.string().optional().describe("Local alias for the room (if name collides)"),
     },
+    { readOnlyHint: false, destructiveHint: false },
     async ({ url, alias }: { url: string; alias?: string }) => {
       if (!opts.onJoinRoom) return textResult("Joining rooms not supported.");
       const result = await opts.onJoinRoom(url, alias);
@@ -230,6 +236,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
     {
       room: z.string().describe("Room name to leave"),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     async ({ room }: { room: string }) => {
       if (!opts.onLeaveRoom) return textResult("Leaving rooms not supported.");
       const result = await opts.onLeaveRoom(room);
@@ -249,6 +256,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         participant: z.string().describe("Participant name"),
         mode: z.string().describe("Engagement mode to set"),
       },
+      { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       async ({ room, participant, mode }: { room: string; participant: string; mode: string }) => {
         if (!opts.onAdminSetModeFor) return textResult("Admin mode changes not supported.");
         const result = await opts.onAdminSetModeFor(room, participant, mode);
@@ -265,6 +273,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         room: z.string().describe("Room name"),
         participant: z.string().describe("Participant name to kick"),
       },
+      { readOnlyHint: false, destructiveHint: true },
       async ({ room, participant }: { room: string; participant: string }) => {
         if (!opts.onAdminKick) return textResult("Admin kick not supported.");
         const result = await opts.onAdminKick(room, participant);

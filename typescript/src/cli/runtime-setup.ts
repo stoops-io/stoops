@@ -2,11 +2,14 @@
  * Shared agent runtime setup — extracted from cli/claude/run.ts.
  *
  * Both `stoops run claude` and `stoops run opencode` use this to:
- *   1. Join servers via HTTP
- *   2. Create SSE multiplexer + EventProcessor
- *   3. Create local runtime MCP server
- *   4. Wire up participant cache updates
- *   5. Provide cleanup
+ *   1. Create SSE multiplexer + EventProcessor
+ *   2. Create local runtime MCP server
+ *   3. Wire up participant cache updates
+ *   4. Provide cleanup
+ *
+ * Rooms are NOT joined during setup. The agent joins rooms by calling
+ * join_room() via MCP. If --join URLs are provided, the startup event
+ * asks the agent to call join_room for each URL.
  *
  * Each runtime only needs to provide its own delivery mechanism
  * (TmuxBridge for Claude, HTTP API for OpenCode).
@@ -45,7 +48,6 @@ export interface JoinResult {
 
 export interface AgentRuntimeSetup {
   agentName: string;
-  participantId: string;
   joinResults: JoinResult[];
   initialParts: ContentPart[] | undefined;
   processor: EventProcessor;
@@ -60,110 +62,23 @@ export interface AgentRuntimeSetup {
 export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<AgentRuntimeSetup> {
   const agentName = options.name ?? randomName();
 
-  // ── Determine join targets ──────────────────────────────────────────────
+  // ── Pending join URLs (not joined yet — agent calls join_room) ─────────
 
-  interface JoinTarget {
-    serverUrl: string;
-    token: string | null;
-  }
+  const pendingUrls = options.joinUrls ?? [];
 
-  const targets: JoinTarget[] = [];
-
-  if (options.joinUrls && options.joinUrls.length > 0) {
-    for (const url of options.joinUrls) {
-      const token = extractToken(url);
-      let serverUrl: string;
-      try {
-        const parsed = new URL(url);
-        parsed.search = "";
-        serverUrl = parsed.toString().replace(/\/$/, "");
-      } catch {
-        serverUrl = url.replace(/\/$/, "");
-      }
-      targets.push({ serverUrl, token });
-    }
-  }
-
-  if (targets.length === 0) {
-    console.error("No join targets specified. Use --join <url>.");
-    process.exit(1);
-  }
-
-  // ── Join each target ────────────────────────────────────────────────────
+  // ── Mutable join results (populated as agent calls join_room) ──────────
 
   const joinResults: JoinResult[] = [];
 
-  for (const target of targets) {
-    console.log(`Joining ${target.serverUrl}...`);
-
-    try {
-      const joinBody: Record<string, unknown> = {
-        type: "agent",
-        name: agentName,
-      };
-      if (target.token) joinBody.token = target.token;
-
-      const res = await fetch(`${target.serverUrl}/join`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(joinBody),
-      });
-
-      if (!res.ok) {
-        const err = await res.text();
-        console.error(`Failed to join: ${err}`);
-        process.exit(1);
-      }
-
-      const data = await res.json() as Record<string, unknown>;
-      const sessionToken = String(data.sessionToken ?? "");
-      const participantId = String(data.participantId ?? "");
-      const roomName = String(data.roomName ?? "");
-      const roomId = String(data.roomId ?? "");
-      const authority = String(data.authority ?? "participant");
-      const participants = (data.participants as Participant[]) ?? [];
-
-      // Create RemoteRoomDataSource and seed participant cache
-      const dataSource = new RemoteRoomDataSource(target.serverUrl, sessionToken, roomId);
-      dataSource.setParticipants(participants);
-
-      joinResults.push({
-        serverUrl: target.serverUrl,
-        sessionToken,
-        participantId,
-        roomName,
-        roomId,
-        authority,
-        participants,
-        dataSource,
-      });
-
-      console.log(`  Joined ${roomName} as ${agentName} (${authority})`);
-    } catch {
-      console.error(`Cannot reach stoops server at ${target.serverUrl}. Is it running?`);
-      process.exit(1);
-    }
-  }
-
-  const participantId = joinResults[0].participantId;
-
-  // ── Create SSE multiplexer ────────────────────────────────────────────
+  // ── Create SSE multiplexer (starts empty) ──────────────────────────────
 
   const sseMux = new SseMultiplexer();
-  for (const jr of joinResults) {
-    sseMux.addConnection(jr.serverUrl, jr.sessionToken, jr.roomName, jr.roomId);
-  }
 
-  // ── Create EventProcessor ─────────────────────────────────────────────
+  // ── Create EventProcessor (selfId set on first join_room) ──────────────
 
-  const processor = new EventProcessor(participantId, agentName, {
+  const processor = new EventProcessor("", agentName, {
     defaultMode: "everyone",
   });
-
-  // Register each room as a remote room
-  for (const jr of joinResults) {
-    processor.connectRemoteRoom(jr.dataSource, jr.roomName);
-  }
 
   // ── Create local runtime MCP server ───────────────────────────────────
 
@@ -179,9 +94,7 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
     onSetMode: async (room, mode) => {
       const conn = processor.resolve(room);
       if (!conn) return { success: false, error: `Unknown room "${room}".` };
-      // Set mode locally in the EventProcessor
       processor.setModeForRoom(conn.dataSource.roomId, mode as any, false);
-      // Notify the server
       try {
         const ds = conn.dataSource as RemoteRoomDataSource;
         const res = await fetch(`${ds.serverUrl}/set-mode`, {
@@ -227,6 +140,12 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
 
         const dataSource = new RemoteRoomDataSource(serverUrl, sessionToken, roomId);
         dataSource.setParticipants(participants);
+        dataSource.setSelf(newParticipantId, agentName);
+
+        // Set selfId on first join
+        if (joinResults.length === 0) {
+          processor.participantId = newParticipantId;
+        }
 
         // Register in EventProcessor and SSE multiplexer
         const mode = processor.getModeForRoom(roomId) ?? "everyone";
@@ -277,7 +196,6 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
       if (!conn) return { success: false, error: `Unknown room "${room}".` };
       const roomId = conn.dataSource.roomId;
 
-      // Find the join result for this room
       const idx = joinResults.findIndex((jr) => jr.roomId === roomId);
       if (idx >= 0) {
         const jr = joinResults[idx];
@@ -303,7 +221,6 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
       if (!conn) return { success: false, error: `Unknown room "${room}".` };
       const ds = conn.dataSource as RemoteRoomDataSource;
 
-      // Find participant by name
       const p = conn.dataSource.listParticipants().find((pp) => pp.name === participant);
       if (!p) return { success: false, error: `Unknown participant "${participant}".` };
 
@@ -351,7 +268,6 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
           const result = await inner.next();
           if (!result.done) {
             const { roomId, event } = result.value;
-            // Update participant cache in RemoteRoomDataSource
             const jr = joinResults.find((j) => j.roomId === roomId);
             if (jr) {
               if (event.type === "ParticipantJoined") {
@@ -374,7 +290,6 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
     sseMux.close();
     await mcpServer.stop();
 
-    // Disconnect from all servers
     for (const jr of joinResults) {
       try {
         await fetch(`${jr.serverUrl}/disconnect`, {
@@ -388,22 +303,20 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
     }
   }
 
-  // ── Build auto-join startup message (if any rooms were auto-joined) ──
+  // ── Build startup event (if --join URLs were provided) ────────────────
 
   let initialParts: ContentPart[] | undefined;
-  if (joinResults.length > 0) {
-    const roomSummaries = joinResults.map((jr) => {
-      const mode = processor.getModeForRoom(jr.roomId);
-      const pCount = jr.participants.length;
-      return `${jr.roomName} (${mode} mode, ${pCount} participant${pCount === 1 ? "" : "s"})`;
-    });
-    const text = `Auto-joined ${roomSummaries.join(" and ")}.`;
-    initialParts = [{ type: "text", text }];
+  if (pendingUrls.length > 0) {
+    if (pendingUrls.length === 1) {
+      initialParts = [{ type: "text", text: `Use join_room("${pendingUrls[0]}") to connect.` }];
+    } else {
+      const lines = pendingUrls.map((u) => `  join_room("${u}")`);
+      initialParts = [{ type: "text", text: `Rooms to join:\n${lines.join("\n")}` }];
+    }
   }
 
   return {
     agentName,
-    participantId,
     joinResults,
     initialParts,
     processor,

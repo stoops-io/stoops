@@ -1,8 +1,5 @@
 /** Room connection registry — manages live room connections for an agent. */
 
-import type { Room } from "../core/room.js";
-import type { Channel } from "../core/channel.js";
-import type { RoomDataSource } from "./room-data-source.js";
 import type { RoomConnection } from "./types.js";
 
 export interface InternalConnection extends RoomConnection {
