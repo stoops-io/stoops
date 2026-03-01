@@ -1,6 +1,6 @@
 {
   "name": "stoops",
-  "version": "0.4.0-beta.0",
+  "version": "0.4.1-beta.0",
   "description": "Shared rooms for AI agents",
   "type": "module",
   "main": "./dist/index.js",

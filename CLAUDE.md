@@ -54,10 +54,9 @@ Starts the server and opens the chat TUI in one command. With `--share`, spawns 
 npx stoops run claude                                       # Claude Code — then tell agent to join a room
 npx stoops run claude --admin                              # with admin MCP tools
 npx stoops run claude -- --model sonnet                    # passthrough args after --
-npx stoops run opencode --join <share-url>                 # OpenCode via HTTP API
-npx stoops run opencode --join <url> -- --model gpt-4o     # passthrough args for opencode
+npx stoops run opencode                                    # OpenCode (in progress — session detection unreliable)
 ```
-Launches a client-side agent runtime with MCP tools. For Claude Code, the agent joins rooms manually by calling `join_room(url)` — tell the agent the URL and it joins, getting full onboarding (identity, mode, participants, recent activity) from the tool response. For OpenCode, `--join` URLs are passed as startup prompts. Everything after `--` is forwarded to the underlying tool as-is.
+Launches a client-side agent runtime with MCP tools. The agent joins rooms manually by calling `join_room(url)` — tell the agent the URL and it joins, getting full onboarding (identity, mode, participants, recent activity) from the tool response. Everything after `--` is forwarded to the underlying tool as-is.
 
 **Remote join (from another machine):**
 ```bash
@@ -72,7 +71,7 @@ npx stoops [--room <name>] [--port <port>] [--share]                            
 npx stoops serve [--room <name>] [--port <port>] [--share]                      # headless server only
 npx stoops join <url> [--name <name>] [--guest]                                 # join an existing room
 npx stoops run claude [--name <name>] [--admin] [-- <args>]                     # connect Claude Code
-npx stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>]    # connect OpenCode
+npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   # connect OpenCode (in progress)
 ```
 
 **Authority model:**
@@ -509,14 +508,15 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **No `waitForReady`** — startup uses a 2-second delay; TmuxBridge queues events until Claude is idle, so exact readiness detection isn't needed
 - **Design doc** — full exploration of alternatives and rationale at `docs/claude-code-tmux-bridge.md`
 
-#### `stoops run opencode` command (`cli/opencode/run.ts`)
+#### `stoops run opencode` command (`cli/opencode/run.ts`) ⚠️ in progress
 
 - **OpenCode agent runtime** — thin wrapper over `setupAgentRuntime()` using OpenCode's HTTP API for delivery; no tmux needed
-- **Flow**: `setupAgentRuntime(options)` → pick random port (14096-15095) → spawn `opencode serve --port <port> <extraArgs>` with `OPENCODE_CONFIG_CONTENT` env to inject stoops MCP → poll `/session/status` until ready (30s timeout) → `POST /session` to create session → build deliver callback → `processor.run(deliver, wrappedSource, initialParts)` → block until child exits or Ctrl+C → cleanup
+- **Flow**: `setupAgentRuntime(options)` → pick random port (14096-15095) → spawn `opencode serve --port <port> <extraArgs>` with `OPENCODE_CONFIG_CONTENT` env to inject stoops MCP → poll `/session/status` until ready (30s timeout) → build deliver callback → `processor.run(deliver, wrappedSource)` → block until child exits or Ctrl+C → cleanup
 - **`OPENCODE_CONFIG_CONTENT` env** — injects stoops MCP server config at launch: `{"mcp":{"stoops":{"type":"remote","url":"<mcp-url>","oauth":false}}}`; no temp files, no cleanup needed
-- **Deliver callback** — `POST /session/:id/message` with `{ parts: [{ type: "text", text }] }`; synchronous (blocks until LLM finishes) to preserve EventProcessor's processing lock; no system preamble — agent learns the protocol progressively through tool descriptions and `join_room` responses
-- **Passthrough args** — everything after `--` forwarded to the `opencode serve` command (e.g. `-- --model gpt-4o`)
-- **No tmux** — pure HTTP API integration; user can optionally watch via `opencode attach http://127.0.0.1:<port>`
+- **Session detection** — when `onRoomJoined` fires, queries `GET /session` (sorted by `time.updated` desc), checks top 3 sessions' messages for `stoops__` tool parts; stores `roomId → sessionId` mapping; unreliable with multiple concurrent sessions (see `docs/opencode-session-detection.md`)
+- **Deliver callback** — `POST /session/:id/message` with `{ parts: [{ type: "text", text }] }`; synchronous (blocks until LLM finishes) to preserve EventProcessor's processing lock
+- **Passthrough args** — everything after `--` forwarded to the `opencode serve` command
+- **No tmux** — pure HTTP API integration; user opens OpenCode in browser
 - **Cleanup** — kills child process, `setup.cleanup()`
 
 #### tmux helpers (`tmux.ts`)

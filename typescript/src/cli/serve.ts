@@ -539,7 +539,6 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   Join:      stoops join ${joinUrl}
   Admin:     stoops join ${adminUrl}
   Claude:    stoops run claude  →  then tell agent to join: ${joinUrl}
-  OpenCode:  stoops run opencode --join ${joinUrl}
 `);
   }
 

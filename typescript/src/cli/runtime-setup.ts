@@ -33,6 +33,8 @@ export interface AgentRuntimeOptions {
   name?: string;
   admin?: boolean;
   extraArgs?: string[];
+  /** Called after a room is successfully joined via join_room MCP tool. */
+  onRoomJoined?: () => void | Promise<void>;
 }
 
 export interface JoinResult {
@@ -176,6 +178,8 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
             assignRef: (id) => processor.assignRef(id),
           });
         }
+
+        await options.onRoomJoined?.();
 
         return {
           success: true,

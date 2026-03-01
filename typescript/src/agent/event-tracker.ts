@@ -24,7 +24,10 @@ export class EventTracker {
   }
 
   markManyDelivered(ids: string[]): void {
-    for (const id of ids) this._deliveredIds.add(id);
+    for (const id of ids) {
+      this._deliveredIds.add(id);
+      this._processedIds.add(id);
+    }
   }
 
   clearDelivered(): void {

@@ -8,7 +8,7 @@
  *   stoops serve [--room <name>] [--port <port>] [--share]                   Headless server only
  *   stoops join <url> [--name <name>] [--guest]                              Join a room as a human
  *   stoops run claude [--name <name>] [--admin] [-- <args>]                Connect Claude Code
- *   stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>] Connect OpenCode
+ *   stoops run opencode [--name <name>] [--admin] [-- <args>]                Connect OpenCode
  */
 
 import { serve } from "./serve.js";
@@ -45,7 +45,7 @@ function printUsage(stream: typeof console.log = console.log): void {
   stream("  stoops serve [--room <name>] [--port <port>] [--share]                   Headless server");
   stream("  stoops join <url> [--name <name>] [--guest]                              Join a room");
   stream("  stoops run claude [--name <name>] [--admin] [-- <args>]                  Connect Claude Code");
-  stream("  stoops run opencode [--join <url>] [--name <name>] [--admin] [-- <args>] Connect OpenCode");
+  stream("  stoops run opencode [--name <name>] [--admin] [-- <args>]                Connect OpenCode");
 }
 
 async function main(): Promise<void> {

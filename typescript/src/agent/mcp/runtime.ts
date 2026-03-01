@@ -31,6 +31,7 @@ import {
   textResult,
 } from "../tool-handlers.js";
 import { MODE_DESCRIPTIONS } from "../prompts.js";
+import { EventEmitterAsyncResource } from "node:events"
 
 export interface JoinRoomResult {
   success: boolean;
