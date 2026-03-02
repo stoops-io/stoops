@@ -12,11 +12,11 @@ const PLACES = [
   "river", "weir", "cascade", "scarp", "tower", "plateau", "upland", "lowland",
 ];
 
-/** Generate a random room name like "glen-4827". */
+/** Generate a random room name like "Glen-4827". */
 export function randomRoomName(): string {
   const place = PLACES[Math.floor(Math.random() * PLACES.length)];
   const digits = String(Math.floor(Math.random() * 9000) + 1000);
-  return `${place}-${digits}`;
+  return `${place[0].toUpperCase()}${place.slice(1)}-${digits}`;
 }
 
 const NAMES = [
@@ -33,9 +33,9 @@ const NAMES = [
   "sora", "tae", "cade", "milo",
 ];
 
-/** Generate a random display name like "wren-4827". */
+/** Generate a random display name like "Wren-4827". */
 export function randomName(): string {
   const name = NAMES[Math.floor(Math.random() * NAMES.length)];
   const digits = String(Math.floor(Math.random() * 9000) + 1000);
-  return `${name}-${digits}`;
+  return `${name[0].toUpperCase()}${name.slice(1)}-${digits}`;
 }
