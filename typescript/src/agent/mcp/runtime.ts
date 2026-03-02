@@ -60,6 +60,10 @@ export interface RuntimeMcpServerOptions {
   onAdminSetModeFor?: (room: string, participant: string, mode: string) => Promise<{ success: boolean; error?: string }>;
   /** Called for admin kick. */
   onAdminKick?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
+  /** Called for admin mute (demote to observer). */
+  onAdminMute?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
+  /** Called for admin unmute (restore to participant). */
+  onAdminUnmute?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export interface RuntimeMcpServer {
@@ -288,6 +292,40 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         return result.success
           ? textResult(`Kicked ${participant} from [${room}].`)
           : textResult(result.error ?? "Failed to kick participant.");
+      },
+    );
+
+    server.tool(
+      "stoops__admin__mute",
+      "Admin: make a participant read-only (demote to observer).",
+      {
+        room: z.string().describe("Room name"),
+        participant: z.string().describe("Participant name to mute"),
+      },
+      { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      async ({ room, participant }: { room: string; participant: string }) => {
+        if (!opts.onAdminMute) return textResult("Admin mute not supported.");
+        const result = await opts.onAdminMute(room, participant);
+        return result.success
+          ? textResult(`Muted ${participant} in [${room}] (observer).`)
+          : textResult(result.error ?? "Failed to mute participant.");
+      },
+    );
+
+    server.tool(
+      "stoops__admin__unmute",
+      "Admin: restore a muted participant (promote to participant).",
+      {
+        room: z.string().describe("Room name"),
+        participant: z.string().describe("Participant name to unmute"),
+      },
+      { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+      async ({ room, participant }: { room: string; participant: string }) => {
+        if (!opts.onAdminUnmute) return textResult("Admin unmute not supported.");
+        const result = await opts.onAdminUnmute(room, participant);
+        return result.success
+          ? textResult(`Unmuted ${participant} in [${room}] (participant).`)
+          : textResult(result.error ?? "Failed to unmute participant.");
       },
     );
   }

@@ -243,7 +243,7 @@ export async function join(options: JoinOptions): Promise<void> {
         return;
       }
 
-      // ── /mute <name> (admin only) ─────────────────────────────────
+      // ── /mute <name> (admin only) — demote to observer ────────────
       case "mute": {
         if (authority !== "admin") { systemEvent("Only admins can mute."); return; }
         const targetName = args[0];
@@ -256,24 +256,24 @@ export async function join(options: JoinOptions): Promise<void> {
           const target = data.participants.find((p) => p.name.toLowerCase() === targetName.toLowerCase());
           if (!target) { systemEvent(`Participant "${targetName}" not found.`); return; }
 
-          const modeRes = await fetch(`${serverUrl}/set-mode`, {
+          const authRes = await fetch(`${serverUrl}/set-authority`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: sessionToken, participantId: target.id, mode: "standby-everyone" }),
+            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "observer" }),
           });
-          if (!modeRes.ok) { systemEvent(`Failed to mute: ${await modeRes.text()}`); return; }
-          systemEvent(`Muted ${targetName} (standby-everyone).`);
+          if (!authRes.ok) { systemEvent(`Failed to mute: ${await authRes.text()}`); return; }
+          systemEvent(`Muted ${targetName} (observer).`);
         } catch {
           systemEvent("Failed to reach server.");
         }
         return;
       }
 
-      // ── /wake <name> (admin only) ─────────────────────────────────
-      case "wake": {
-        if (authority !== "admin") { systemEvent("Only admins can wake."); return; }
+      // ── /unmute <name> (admin only) — restore to participant ──────
+      case "unmute": {
+        if (authority !== "admin") { systemEvent("Only admins can unmute."); return; }
         const targetName = args[0];
-        if (!targetName) { systemEvent("Usage: /wake <name>"); return; }
+        if (!targetName) { systemEvent("Usage: /unmute <name>"); return; }
 
         try {
           const res = await fetch(`${serverUrl}/participants?token=${sessionToken}`);
@@ -282,13 +282,13 @@ export async function join(options: JoinOptions): Promise<void> {
           const target = data.participants.find((p) => p.name.toLowerCase() === targetName.toLowerCase());
           if (!target) { systemEvent(`Participant "${targetName}" not found.`); return; }
 
-          const modeRes = await fetch(`${serverUrl}/set-mode`, {
+          const authRes = await fetch(`${serverUrl}/set-authority`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: sessionToken, participantId: target.id, mode: "everyone" }),
+            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "participant" }),
           });
-          if (!modeRes.ok) { systemEvent(`Failed to wake: ${await modeRes.text()}`); return; }
-          systemEvent(`Woke ${targetName} (everyone).`);
+          if (!authRes.ok) { systemEvent(`Failed to unmute: ${await authRes.text()}`); return; }
+          systemEvent(`Unmuted ${targetName} (participant).`);
         } catch {
           systemEvent("Failed to reach server.");
         }
@@ -576,6 +576,15 @@ function toDisplayEvent(
           ts,
           kind: "mode",
           mode: String((event.detail as Record<string, unknown>)?.mode ?? ""),
+        };
+      }
+      if (event.action === "authority_changed") {
+        const newAuth = String((event.detail as Record<string, unknown>)?.authority ?? "");
+        return {
+          id: randomUUID(),
+          ts,
+          kind: "system",
+          content: `authority → ${newAuth}`,
         };
       }
       return null;

@@ -401,6 +401,46 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
         return;
       }
 
+      // ── POST /set-authority ──────────────────────────────────────────────
+      if (url.pathname === "/set-authority") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        if (session.authority !== "admin") return jsonError(res, 403, "Only admins can change authority");
+        const targetId = String(body.participantId ?? "");
+        const newAuthority = String(body.authority ?? "") as AuthorityLevel;
+        if (!targetId) return jsonError(res, 400, "Missing participantId");
+        if (!["admin", "participant", "observer"].includes(newAuthority)) {
+          return jsonError(res, 400, "Invalid authority. Must be admin, participant, or observer.");
+        }
+        if (targetId === session.id) return jsonError(res, 400, "Cannot change own authority");
+
+        // Update all three places: ConnectedParticipant, TokenManager session, Room participant
+        const targetSession = idToSession.get(targetId);
+        if (!targetSession) return jsonError(res, 404, "Participant not found");
+        const target = participants.get(targetSession);
+        if (!target) return jsonError(res, 404, "Participant not found");
+
+        target.authority = newAuthority;
+        tokens.updateSessionAuthority(targetSession, newAuthority);
+        room.setParticipantAuthority(targetId, newAuthority);
+
+        // Emit authority_changed activity event
+        const p = participants.get(sessionToken);
+        if (p) {
+          await p.channel.emit(createEvent<ActivityEvent>({
+            type: "Activity",
+            category: "ACTIVITY",
+            room_id: room.roomId,
+            participant_id: targetId,
+            action: "authority_changed",
+            detail: { authority: newAuthority },
+          }));
+        }
+
+        log(`${target.name} authority → ${newAuthority}`);
+        jsonOk(res);
+        return;
+      }
+
       // ── POST /kick ──────────────────────────────────────────────────────
       if (url.pathname === "/kick") {
         if (!session) return jsonError(res, 401, "Invalid session token");

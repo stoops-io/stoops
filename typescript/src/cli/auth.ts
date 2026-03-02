@@ -55,6 +55,14 @@ export class TokenManager {
     this._sessionTokens.delete(token);
   }
 
+  /** Update the authority level for an existing session. */
+  updateSessionAuthority(token: string, newAuthority: AuthorityLevel): boolean {
+    const data = this._sessionTokens.get(token);
+    if (!data) return false;
+    data.authority = newAuthority;
+    return true;
+  }
+
   /** Find a session token by participant ID (for cleanup). */
   findSessionByParticipant(participantId: string): string | null {
     for (const [token, data] of this._sessionTokens) {

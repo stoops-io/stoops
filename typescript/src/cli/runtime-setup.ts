@@ -245,6 +245,46 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
         return { success: false, error: "Server unreachable." };
       }
     } : undefined,
+    onAdminMute: options.admin ? async (room, participant) => {
+      const conn = processor.resolve(room);
+      if (!conn) return { success: false, error: `Unknown room "${room}".` };
+      const ds = conn.dataSource as RemoteRoomDataSource;
+
+      const p = conn.dataSource.listParticipants().find((pp) => pp.name === participant);
+      if (!p) return { success: false, error: `Unknown participant "${participant}".` };
+
+      try {
+        const res = await fetch(`${ds.serverUrl}/set-authority`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "observer" }),
+        });
+        if (!res.ok) return { success: false, error: await res.text() };
+        return { success: true };
+      } catch {
+        return { success: false, error: "Server unreachable." };
+      }
+    } : undefined,
+    onAdminUnmute: options.admin ? async (room, participant) => {
+      const conn = processor.resolve(room);
+      if (!conn) return { success: false, error: `Unknown room "${room}".` };
+      const ds = conn.dataSource as RemoteRoomDataSource;
+
+      const p = conn.dataSource.listParticipants().find((pp) => pp.name === participant);
+      if (!p) return { success: false, error: `Unknown participant "${participant}".` };
+
+      try {
+        const res = await fetch(`${ds.serverUrl}/set-authority`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "participant" }),
+        });
+        if (!res.ok) return { success: false, error: await res.text() };
+        return { success: true };
+      } catch {
+        return { success: false, error: "Server unreachable." };
+      }
+    } : undefined,
     onAdminKick: options.admin ? async (room, participant) => {
       const conn = processor.resolve(room);
       if (!conn) return { success: false, error: `Unknown room "${room}".` };

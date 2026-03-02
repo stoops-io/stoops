@@ -68,10 +68,10 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/kick",    description: "Remove a participant", adminOnly: true, params: [
     { label: "name", completions: "participants" },
   ]},
-  { name: "/mute",    description: "Mute a participant", adminOnly: true, params: [
+  { name: "/mute",    description: "Make read-only (observer)", adminOnly: true, params: [
     { label: "name", completions: "participants" },
   ]},
-  { name: "/wake",    description: "Wake a participant", adminOnly: true, params: [
+  { name: "/unmute",  description: "Restore to participant", adminOnly: true, params: [
     { label: "name", completions: "participants" },
   ]},
   { name: "/setmode", description: "Set engagement mode", adminOnly: true, params: [
@@ -277,9 +277,27 @@ function App({
 
   type SuggestionItem =
     | { kind: "command"; cmd: SlashCommand; insert: string }
-    | { kind: "param";   value: string;     insert: string };
+    | { kind: "param";   value: string;     insert: string }
+    | { kind: "mention"; value: string;     insert: string };
 
   const suggestionState = useMemo((): { items: SuggestionItem[]; ghostHint: string } => {
+    // @mention detection — match @partial at end of input
+    const mentionMatch = input.match(/@([a-zA-Z0-9_-]*)$/);
+    if (mentionMatch && participants.length > 0) {
+      const prefix = mentionMatch[1].toLowerCase();
+      const filtered = participants.filter((p) => p.toLowerCase().startsWith(prefix));
+      if (filtered.length > 0) {
+        const before = input.slice(0, mentionMatch.index!);
+        const items: SuggestionItem[] = filtered.map((p) => ({
+          kind: "mention" as const,
+          value: p,
+          insert: before + "@" + p + " ",
+        }));
+        const ghostHint = prefix.length === 0 ? "" : (filtered[0].slice(prefix.length));
+        return { items, ghostHint };
+      }
+    }
+
     if (!input.startsWith("/")) return { items: [], ghostHint: "" };
 
     const spaceIdx = input.indexOf(" ");
@@ -515,6 +533,7 @@ function App({
             return (
               <Box key={s.value}>
                 <Text color={selected ? C.cyan : C.muted}>{selected ? "› " : "  "}</Text>
+                {s.kind === "mention" && <Text color={C.dim}>{"@"}</Text>}
                 <Text color={selected ? C.cyan : C.secondary} bold={selected}>{s.value}</Text>
               </Box>
             );
