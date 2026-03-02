@@ -41,6 +41,8 @@ export interface ServeOptions {
   port?: number;
   share?: boolean;
   quiet?: boolean;
+  /** Suppress all human-readable output; emit one JSON line with server info on stdout. */
+  headless?: boolean;
 }
 
 export interface ServeResult {
@@ -72,6 +74,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   const roomName = options.room ?? randomRoomName();
   const port = options.port ?? 7890;
   const serverUrl = `http://127.0.0.1:${port}`;
+  const log = options.headless ? () => {} : logServer;
 
   let publicUrl = serverUrl;
   let tunnelProcess: ChildProcess | null = null;
@@ -318,7 +321,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
           authority: p.authority ?? "participant",
         }));
 
-        logServer(`${name} joined (${authority})`);
+        log(`${name} joined (${authority})`);
 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
@@ -420,7 +423,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
               sse.end();
               sseConnections.delete(targetId);
             }
-            logServer(`kicked ${targetId}`);
+            log(`kicked ${targetId}`);
           }
         }
 
@@ -476,7 +479,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
             tokens.revokeSessionToken(targetToken);
             const sse = sseConnections.get(p.id);
             if (sse) { sse.end(); sseConnections.delete(p.id); }
-            logServer(`${p.name} disconnected`);
+            log(`${p.name} disconnected`);
           }
 
           const o = observers.get(targetToken);
@@ -525,7 +528,9 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   const adminToken = tokens.generateShareToken("admin", "admin")!;
   const participantToken = tokens.generateShareToken("admin", "participant")!;
 
-  if (!options.quiet) {
+  if (options.headless) {
+    process.stdout.write(JSON.stringify({ serverUrl, publicUrl, roomName, adminToken, participantToken }) + "\n");
+  } else if (!options.quiet) {
     const version = process.env.npm_package_version ?? "0.3.0";
     const adminUrl = buildShareUrl(publicUrl, adminToken);
     const joinUrl = buildShareUrl(publicUrl, participantToken);
@@ -545,7 +550,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   // ── Graceful shutdown ──────────────────────────────────────────────────
 
   const shutdown = async () => {
-    logServer("shutting down...");
+    log("shutting down...");
     if (tunnelProcess) { tunnelProcess.kill(); tunnelProcess = null; }
     for (const [id, sse] of sseConnections) { sse.end(); sseConnections.delete(id); }
     for (const p of participants.values()) { await p.channel.disconnect().catch(() => {}); }

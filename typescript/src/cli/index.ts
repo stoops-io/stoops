@@ -71,6 +71,7 @@ async function main(): Promise<void> {
       joinUrls: joinUrls.length > 0 ? joinUrls : undefined,
       name: getFlag("name", stoopsArgs),
       admin: stoopsArgs.includes("--admin"),
+      headless: stoopsArgs.includes("--headless"),
       extraArgs,
     };
 
@@ -86,13 +87,14 @@ async function main(): Promise<void> {
   if (args[0] === "join") {
     const server = args[1];
     if (!server || server.startsWith("--")) {
-      console.error("Usage: stoops join <url> [--name <name>] [--guest]");
+      console.error("Usage: stoops join <url> [--name <name>] [--guest] [--headless]");
       process.exit(1);
     }
     await join({
       server,
       name: getFlag("name"),
       guest: args.includes("--guest"),
+      headless: args.includes("--headless"),
     });
     return;
   }
@@ -104,6 +106,7 @@ async function main(): Promise<void> {
       room: getFlag("room"),
       port: portStr ? parseInt(portStr, 10) : undefined,
       share: args.includes("--share"),
+      headless: args.includes("--headless"),
     });
     return;
   }

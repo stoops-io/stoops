@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { createInterface } from "node:readline";
 import { randomName } from "../core/names.js";
 import type { RoomEvent } from "../core/events.js";
 import type { AuthorityLevel } from "../core/types.js";
@@ -19,6 +20,8 @@ export interface JoinOptions {
   guest?: boolean;
   /** Share URL to display before TUI starts (for host+join mode with --share). */
   shareUrl?: string;
+  /** Skip TUI — stream events as JSON to stdout, read messages from stdin. */
+  headless?: boolean;
 }
 
 export async function join(options: JoinOptions): Promise<void> {
@@ -99,6 +102,73 @@ export async function join(options: JoinOptions): Promise<void> {
       // Server may be down
     }
   };
+
+  // ── Headless mode — skip TUI, stream events as JSON, read messages from stdin ──
+
+  if (options.headless) {
+    const sseController = new AbortController();
+    const cleanup = async () => {
+      sseController.abort();
+      await disconnect();
+    };
+
+    process.on("SIGINT", async () => { await cleanup(); process.exit(0); });
+    process.on("SIGTERM", async () => { await cleanup(); process.exit(0); });
+
+    // Read messages from stdin and send them
+    const rl = createInterface({ input: process.stdin, terminal: false });
+    rl.on("line", async (line) => {
+      const content = line.trim();
+      if (!content || authority === "observer") return;
+      try {
+        await fetch(`${serverUrl}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: sessionToken, content }),
+        });
+      } catch { /* server may be down */ }
+    });
+
+    // Stream events from SSE and write as JSON lines to stdout
+    try {
+      const res = await fetch(`${serverUrl}/events`, {
+        method: "POST",
+        headers: { Accept: "text/event-stream", Authorization: `Bearer ${sessionToken}` },
+        signal: sseController.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        process.stderr.write("Failed to connect event stream\n");
+        await cleanup();
+        process.exit(1);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop()!;
+        for (const part of parts) {
+          const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
+          if (!dataLine) continue;
+          try {
+            const event = JSON.parse(dataLine.slice(6));
+            process.stdout.write(JSON.stringify(event) + "\n");
+          } catch { /* malformed */ }
+        }
+      }
+    } catch {
+      // Stream ended or aborted
+    }
+
+    if (!disconnected) { await cleanup(); }
+    process.exit(0);
+  }
 
   // ── Start TUI ───────────────────────────────────────────────────────────
 

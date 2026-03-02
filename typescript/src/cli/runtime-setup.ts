@@ -33,6 +33,8 @@ export interface AgentRuntimeOptions {
   name?: string;
   admin?: boolean;
   extraArgs?: string[];
+  /** Skip tmux/UI — deliver events as plain text to stdout. MCP server still runs. */
+  headless?: boolean;
   /** Called after a room is successfully joined via join_room MCP tool. */
   onRoomJoined?: () => void | Promise<void>;
 }
