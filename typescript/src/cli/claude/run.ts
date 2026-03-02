@@ -23,6 +23,7 @@ import {
 } from "../tmux.js";
 import { TmuxBridge } from "./tmux-bridge.js";
 import { setupAgentRuntime, type AgentRuntimeOptions } from "../runtime-setup.js";
+import { contentPartsToString } from "../../agent/prompts.js";
 
 export { type AgentRuntimeOptions as RunClaudeOptions };
 
@@ -64,6 +65,32 @@ const MCP_STDIO_BRIDGE = [
 ].join('\n');
 
 export async function runClaude(options: AgentRuntimeOptions): Promise<void> {
+  // ── Headless mode — skip tmux, deliver events as plain text to stdout ────
+
+  if (options.headless) {
+    const setup = await setupAgentRuntime(options);
+
+    const deliver = async (parts: Parameters<typeof contentPartsToString>[0]) => {
+      const text = contentPartsToString(parts);
+      if (text.trim()) process.stdout.write(text + "\n");
+    };
+
+    const eventLoopPromise = setup.processor
+      .run(deliver, setup.wrappedSource, setup.initialParts)
+      .catch(() => {});
+
+    process.stderr.write(`MCP server: ${setup.mcpServer.url}\n`);
+
+    await new Promise<void>((resolve) => {
+      process.on("SIGINT", resolve);
+      process.on("SIGTERM", resolve);
+    });
+
+    await setup.cleanup();
+    await eventLoopPromise;
+    return;
+  }
+
   // ── Preflight checks ────────────────────────────────────────────────────
 
   if (!tmuxAvailable()) {

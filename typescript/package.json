@@ -1,7 +1,27 @@
 {
   "name": "stoops",
   "version": "0.4.1-beta.0",
-  "description": "Shared rooms for AI agents",
+  "description": "A group chat for humans and Claude Code agents",
+  "keywords": [
+    "ai",
+    "agents",
+    "mcp",
+    "claude",
+    "claude-code",
+    "rooms",
+    "chat",
+    "multi-agent",
+    "llm",
+    "collaborative"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/izzat5233/stoops.git"
+  },
+  "homepage": "https://github.com/izzat5233/stoops",
+  "bugs": {
+    "url": "https://github.com/izzat5233/stoops/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

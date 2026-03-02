@@ -98,20 +98,26 @@ export class TmuxBridge {
   /**
    * Try to inject text, choosing strategy based on TUI state.
    * If the state is unsafe, queues the text and starts polling.
+   *
+   * Text is flattened to a single line before injection to avoid triggering
+   * Claude Code's paste detection. When multi-line text arrives via
+   * `send-keys -l`, Claude Code detects it as a paste and collapses it into
+   * "[Pasted text #1 +N lines]" which may not reliably submit with Enter.
    */
   private inject(text: string): void {
+    const flat = text.replace(/\n/g, " ");
     const state = this.detectState();
 
     switch (state) {
       case "idle":
-        this.injectIdle(text);
+        this.injectIdle(flat);
         break;
       case "typing":
-        this.injectWhileTyping(text);
+        this.injectWhileTyping(flat);
         break;
       default:
         // dialog, permission, streaming, unknown — queue it
-        this.enqueue(text);
+        this.enqueue(flat);
         break;
     }
   }
@@ -121,9 +127,16 @@ export class TmuxBridge {
     return tmuxCapturePane(this.session);
   }
 
-  /** Inject into an idle prompt: type text + Enter. */
+  /**
+   * Inject into an idle prompt: type text + Enter.
+   * Sends a second Enter after a short delay as a safety net — if Claude Code's
+   * paste detection swallowed the first Enter, the second one submits. If the
+   * first Enter worked, Claude is streaming and the second Enter is a no-op.
+   */
   private injectIdle(text: string): void {
     tmuxInjectText(this.session, text);
+    tmuxSendEnter(this.session);
+    this.sleep(80);
     tmuxSendEnter(this.session);
   }
 
@@ -138,8 +151,10 @@ export class TmuxBridge {
     tmuxSendKey(this.session, "C-u");
     this.sleep(this.keystrokeDelayMs);
 
-    // Inject our event
+    // Inject our event (double-Enter for paste detection resilience)
     tmuxInjectText(this.session, text);
+    tmuxSendEnter(this.session);
+    this.sleep(80);
     tmuxSendEnter(this.session);
     this.sleep(this.keystrokeDelayMs);
 
@@ -167,7 +182,17 @@ export class TmuxBridge {
     }
   }
 
-  /** Try to drain all queued events if the state is safe. */
+  /**
+   * Try to drain one queued event if the state is safe.
+   *
+   * Drains one event at a time rather than batching all into one multi-line
+   * string — multi-line text triggers Claude Code's paste detection which
+   * collapses it into "[Pasted text #1 +N lines]".
+   *
+   * After injecting one event, the poll continues. The next cycle re-checks
+   * state: if Claude is busy (streaming), remaining events wait. If idle,
+   * the next event is injected. Events are already flattened in inject().
+   */
   private drainQueue(): void {
     if (this.queue.length === 0) {
       this.stopPolling();
@@ -176,17 +201,18 @@ export class TmuxBridge {
 
     const state = this.detectState();
     if (state === "idle" || state === "typing") {
-      // Batch all queued events into one injection
-      const batch = this.queue.splice(0);
-      const combined = batch.join("\n");
+      const text = this.queue.shift()!;
 
       if (state === "idle") {
-        this.injectIdle(combined);
+        this.injectIdle(text);
       } else {
-        this.injectWhileTyping(combined);
+        this.injectWhileTyping(text);
       }
 
-      this.stopPolling();
+      if (this.queue.length === 0) {
+        this.stopPolling();
+      }
+      // else: keep polling to drain remaining events
     }
     // else: still blocked, keep polling
   }

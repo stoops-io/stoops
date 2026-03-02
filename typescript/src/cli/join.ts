@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { createInterface } from "node:readline";
 import { randomName } from "../core/names.js";
 import type { RoomEvent } from "../core/events.js";
 import type { AuthorityLevel } from "../core/types.js";
@@ -19,6 +20,8 @@ export interface JoinOptions {
   guest?: boolean;
   /** Share URL to display before TUI starts (for host+join mode with --share). */
   shareUrl?: string;
+  /** Skip TUI — stream events as JSON to stdout, read messages from stdin. */
+  headless?: boolean;
 }
 
 export async function join(options: JoinOptions): Promise<void> {
@@ -100,6 +103,73 @@ export async function join(options: JoinOptions): Promise<void> {
     }
   };
 
+  // ── Headless mode — skip TUI, stream events as JSON, read messages from stdin ──
+
+  if (options.headless) {
+    const sseController = new AbortController();
+    const cleanup = async () => {
+      sseController.abort();
+      await disconnect();
+    };
+
+    process.on("SIGINT", async () => { await cleanup(); process.exit(0); });
+    process.on("SIGTERM", async () => { await cleanup(); process.exit(0); });
+
+    // Read messages from stdin and send them
+    const rl = createInterface({ input: process.stdin, terminal: false });
+    rl.on("line", async (line) => {
+      const content = line.trim();
+      if (!content || authority === "observer") return;
+      try {
+        await fetch(`${serverUrl}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: sessionToken, content }),
+        });
+      } catch { /* server may be down */ }
+    });
+
+    // Stream events from SSE and write as JSON lines to stdout
+    try {
+      const res = await fetch(`${serverUrl}/events`, {
+        method: "POST",
+        headers: { Accept: "text/event-stream", Authorization: `Bearer ${sessionToken}` },
+        signal: sseController.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        process.stderr.write("Failed to connect event stream\n");
+        await cleanup();
+        process.exit(1);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop()!;
+        for (const part of parts) {
+          const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
+          if (!dataLine) continue;
+          try {
+            const event = JSON.parse(dataLine.slice(6));
+            process.stdout.write(JSON.stringify(event) + "\n");
+          } catch { /* malformed */ }
+        }
+      }
+    } catch {
+      // Stream ended or aborted
+    }
+
+    if (!disconnected) { await cleanup(); }
+    process.exit(0);
+  }
+
   // ── Start TUI ───────────────────────────────────────────────────────────
 
   const isReadOnly = authority === "observer" || isGuest;
@@ -173,7 +243,7 @@ export async function join(options: JoinOptions): Promise<void> {
         return;
       }
 
-      // ── /mute <name> (admin only) ─────────────────────────────────
+      // ── /mute <name> (admin only) — demote to observer ────────────
       case "mute": {
         if (authority !== "admin") { systemEvent("Only admins can mute."); return; }
         const targetName = args[0];
@@ -186,24 +256,24 @@ export async function join(options: JoinOptions): Promise<void> {
           const target = data.participants.find((p) => p.name.toLowerCase() === targetName.toLowerCase());
           if (!target) { systemEvent(`Participant "${targetName}" not found.`); return; }
 
-          const modeRes = await fetch(`${serverUrl}/set-mode`, {
+          const authRes = await fetch(`${serverUrl}/set-authority`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: sessionToken, participantId: target.id, mode: "standby-everyone" }),
+            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "observer" }),
           });
-          if (!modeRes.ok) { systemEvent(`Failed to mute: ${await modeRes.text()}`); return; }
-          systemEvent(`Muted ${targetName} (standby-everyone).`);
+          if (!authRes.ok) { systemEvent(`Failed to mute: ${await authRes.text()}`); return; }
+          systemEvent(`Muted ${targetName} (observer).`);
         } catch {
           systemEvent("Failed to reach server.");
         }
         return;
       }
 
-      // ── /wake <name> (admin only) ─────────────────────────────────
-      case "wake": {
-        if (authority !== "admin") { systemEvent("Only admins can wake."); return; }
+      // ── /unmute <name> (admin only) — restore to participant ──────
+      case "unmute": {
+        if (authority !== "admin") { systemEvent("Only admins can unmute."); return; }
         const targetName = args[0];
-        if (!targetName) { systemEvent("Usage: /wake <name>"); return; }
+        if (!targetName) { systemEvent("Usage: /unmute <name>"); return; }
 
         try {
           const res = await fetch(`${serverUrl}/participants?token=${sessionToken}`);
@@ -212,13 +282,13 @@ export async function join(options: JoinOptions): Promise<void> {
           const target = data.participants.find((p) => p.name.toLowerCase() === targetName.toLowerCase());
           if (!target) { systemEvent(`Participant "${targetName}" not found.`); return; }
 
-          const modeRes = await fetch(`${serverUrl}/set-mode`, {
+          const authRes = await fetch(`${serverUrl}/set-authority`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: sessionToken, participantId: target.id, mode: "everyone" }),
+            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "participant" }),
           });
-          if (!modeRes.ok) { systemEvent(`Failed to wake: ${await modeRes.text()}`); return; }
-          systemEvent(`Woke ${targetName} (everyone).`);
+          if (!authRes.ok) { systemEvent(`Failed to unmute: ${await authRes.text()}`); return; }
+          systemEvent(`Unmuted ${targetName} (participant).`);
         } catch {
           systemEvent("Failed to reach server.");
         }
@@ -506,6 +576,15 @@ function toDisplayEvent(
           ts,
           kind: "mode",
           mode: String((event.detail as Record<string, unknown>)?.mode ?? ""),
+        };
+      }
+      if (event.action === "authority_changed") {
+        const newAuth = String((event.detail as Record<string, unknown>)?.authority ?? "");
+        return {
+          id: randomUUID(),
+          ts,
+          kind: "system",
+          content: `authority → ${newAuth}`,
         };
       }
       return null;

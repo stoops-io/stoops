@@ -192,6 +192,14 @@ export class Room {
     return this.storage.getMessage(this.roomId, id);
   }
 
+  /** Update a participant's authority level at runtime. */
+  setParticipantAuthority(participantId: string, authority: AuthorityLevel): boolean {
+    const participant = this._participants.get(participantId);
+    if (!participant) return false;
+    participant.authority = authority;
+    return true;
+  }
+
   // ── Internal methods (called by Channel) ──────────────────────────────────
 
   /**

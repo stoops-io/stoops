@@ -125,6 +125,15 @@ export type EngagementMode =
   | "me" | "people" | "agents" | "everyone"
   | "standby-me" | "standby-people" | "standby-agents" | "standby-everyone";
 
+export const VALID_MODES: ReadonlySet<string> = new Set<EngagementMode>([
+  "me", "people", "agents", "everyone",
+  "standby-me", "standby-people", "standby-agents", "standby-everyone",
+]);
+
+export function isValidMode(mode: string): mode is EngagementMode {
+  return VALID_MODES.has(mode);
+}
+
 // ── Core classification logic (shared) ────────────────────────────────────────
 
 function senderMatches(

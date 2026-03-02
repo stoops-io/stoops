@@ -68,9 +68,9 @@ Opens the TUI connected to a remote server. Events stream via SSE; messages sent
 **All commands:**
 ```bash
 npx stoops [--room <name>] [--port <port>] [--share]                            # host + join
-npx stoops serve [--room <name>] [--port <port>] [--share]                      # headless server only
-npx stoops join <url> [--name <name>] [--guest]                                 # join an existing room
-npx stoops run claude [--name <name>] [--admin] [-- <args>]                     # connect Claude Code
+npx stoops serve [--room <name>] [--port <port>] [--share] [--headless]         # server only
+npx stoops join <url> [--name <name>] [--guest] [--headless]                    # join an existing room
+npx stoops run claude [--name <name>] [--admin] [--headless] [-- <args>]        # connect Claude Code
 npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   # connect OpenCode (in progress)
 ```
 
@@ -91,23 +91,35 @@ npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   
 - `stoops__leave_room(room)` — leave a room
 - `stoops__admin__set_mode_for(room, participant, mode)` — admin only
 - `stoops__admin__kick(room, participant)` — admin only
+- `stoops__admin__mute(room, participant)` — admin only, demote to observer
+- `stoops__admin__unmute(room, participant)` — admin only, restore to participant
 
 **TUI slash commands:**
 - `/who` — list participants with types and authority
 - `/leave` — disconnect
 - `/kick <name>` — admin: remove a participant
-- `/mute <name>` — admin: force standby-everyone
-- `/wake <name>` — admin: force everyone mode
+- `/mute <name>` — admin: demote to observer (read-only)
+- `/unmute <name>` — admin: restore to participant
 - `/setmode <name> <mode>` — admin: set specific mode
 - `/share [--as admin|participant|observer]` — generate share links
 
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (247 passing)
+cd typescript && npm test          # run tests (261 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```
+
+### Headless mode
+
+All three CLI commands support `--headless` for scriptable, terminal-free operation:
+
+- `stoops serve --headless` — emits a single JSON line `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` then runs silently. No banner, no logs.
+- `stoops join <url> --headless` — skips the TUI; streams raw `RoomEvent` JSON lines to stdout, reads messages from stdin (one line per send).
+- `stoops run claude --headless` — skips tmux; delivers formatted events as plain text to stdout. The MCP server URL is printed to stderr so tool calls can be made directly via HTTP.
+
+Together these make it possible to drive a full room scenario from a script: start a server, parse its tokens, connect an agent runtime, send messages as a human participant, and inspect what the agent received — all without a terminal or tmux. The `--headless` agent runtime runs the full stack (EventProcessor, SSE multiplexer, engagement engine, MCP server) with only the last-mile delivery swapped out.
 
 ## Key concepts
 
@@ -174,6 +186,7 @@ What's built, what works, what's planned. **Always update this section after imp
 - **`Room.connect(participantId, name, options?)`** — creates a `Channel` for a participant; options: `{ type?, identifier?, subscribe?, silent?, authority? }`; `silent: true` suppresses the `ParticipantJoined` event (used for agent reconnects); supports optional `identifier` for @mention matching; optional `authority` stored on the Participant; reconnects disconnect the old channel automatically
 - **`Room.observe()`** — returns a `Channel` that receives every room event including targeted `MentionedEvent`s directed at other participants; observers are excluded from `listParticipants()` and don't emit join/leave events; disconnect via `observer.disconnect()`
 - **`Room.listParticipants()`** — returns all connected participants (observers excluded)
+- **`Room.setParticipantAuthority(participantId, authority)`** — updates a participant's authority level at runtime; returns `true` if found
 - **`Room.listMessages(count, cursor)`** — paginated message history, newest-first
 - **`Room.searchMessages(query, count, cursor)`** — keyword search across message content, newest-first
 - **`Room.listEvents(category?, count?, cursor?)`** — paginated event history, optionally filtered by category
@@ -276,9 +289,9 @@ What's built, what works, what's planned. **Always update this section after imp
 - **Full MCP server** (`createFullMcpServer()`) — for app-path consumers (ClaudeSession, LangGraphSession); returns `{ url, instance, stop }`; HTTP + SDK transport; 4 tools: `catch_up`, `search_by_text`, `search_by_message`, `send_message`
 - **Runtime MCP server** (`createRuntimeMcpServer()`) — for CLI agent runtime; local proxy that routes tool calls to remote stoop servers via HTTP; returns `{ url, stop }`
 - **Runtime tools** (always present): `stoops__catch_up(room?)`, `stoops__search_by_text(room, query)`, `stoops__search_by_message(room, ref)`, `stoops__send_message(room, content)`, `stoops__set_mode(room, mode)`, `stoops__join_room(url, alias?)`, `stoops__leave_room(room)`
-- **Runtime admin tools** (with `--admin` flag): `stoops__admin__set_mode_for(room, participant, mode)`, `stoops__admin__kick(room, participant)`
+- **Runtime admin tools** (with `--admin` flag): `stoops__admin__set_mode_for(room, participant, mode)`, `stoops__admin__kick(room, participant)`, `stoops__admin__mute(room, participant)`, `stoops__admin__unmute(room, participant)`
 - **Rich `join_room` response** — returns onboarding with identity, mode + description, person, participant list, and recent activity via `buildCatchUpLines()`; `MODE_DESCRIPTIONS` map provides one-liner mode explanations
-- **Callback-based routing** — runtime MCP server accepts `onJoinRoom`, `onLeaveRoom`, `onSetMode`, `onAdminSetModeFor`, `onAdminKick` callbacks; the agent runtime wires these to HTTP calls to the right stoop server
+- **Callback-based routing** — runtime MCP server accepts `onJoinRoom`, `onLeaveRoom`, `onSetMode`, `onAdminSetModeFor`, `onAdminKick`, `onAdminMute`, `onAdminUnmute` callbacks; the agent runtime wires these to HTTP calls to the right stoop server
 
 #### Tool Handlers
 
@@ -376,6 +389,7 @@ What's built, what works, what's planned. **Always update this section after imp
 - `session-langgraph.test.ts` — 4 tests (1 skipped): module exports, session creation, MCP server
 - `session-claude.test.ts` — 4 tests: module exports, session creation, temp directory, SDK loading
 - `tmux-bridge.test.ts` — 20 tests: state detection heuristics for idle, typing, dialog (single-select, multi-select, plan approval, review/submit), permission, streaming, unknown, and priority ordering
+- `integration.test.ts` — 13 tests: full CLI stack via `--headless` mode — server lifecycle, join/leave, observer authority, messaging (HTTP + SSE), authority enforcement, kick permissions, mute/unmute (authority change), multi-participant, share link generation, @mention delivery, self-demotion prevention
 
 ---
 
@@ -394,6 +408,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
   - Session tokens: random hex, stored in `Map<token, {participantId, authority}>`; issued on join, used for all API calls
   - `generateShareToken(callerAuthority, targetAuthority)` — enforces tier ordering (can only generate at own tier or below)
   - `validateShareToken()`, `createSessionToken()`, `validateSessionToken()`, `revokeSessionToken()`, `findSessionByParticipant()`
+  - `updateSessionAuthority(token, newAuthority)` — mutates the authority of an existing session in place; used by `/mute` and `/unmute`
 - **`buildShareUrl(baseUrl, token)`** — constructs share URL with `?token=` query param
 - **`extractToken(url)`** — extracts token from URL query string
 
@@ -413,6 +428,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Token-based auth** — all endpoints validate session tokens via `getSession()` helper; share tokens validated on join
 - **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` after server is ready
 - **Boot** — generates admin + participant share tokens; prints URLs with `stoops join`, `stoops run claude` (with manual join instruction), and `stoops run opencode --join` commands
+- **`--headless` flag** — suppresses all output; emits one JSON line `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` for scripted use
 - **HTTP API** on configurable port (default 7890):
   - `POST /join` — accepts `{ token, name?, type? }`; validates share token → determines authority; creates participant (admin/participant) or observer; returns `{ sessionToken, participantId, roomName, roomId, participants, authority }`
   - `POST /events` — SSE stream; auth via `Authorization: Bearer <token>` header; sends last 50 events as history then streams live; enriches `MessageSent` with `_replyToName`; POST required for Cloudflare tunnel real-time flushing
@@ -424,6 +440,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
   - `GET /search?token=<session>&query&count&cursor` — keyword search
   - `POST /event` — `{ token, event }` — emit event (for ToolUse, Activity, ContextCompacted)
   - `POST /set-mode` — `{ token, participantId?, mode }` — self for own, admin for others
+  - `POST /set-authority` — `{ token, participantId, authority }` — admin only; changes participant's authority level (admin/participant/observer); prevents self-demotion; emits `authority_changed` ActivityEvent
   - `POST /kick` — `{ token, participantId }` — admin only
   - `POST /share` — `{ token, authority? }` — generate share links at requested tier
   - `POST /disconnect` — `{ token }` — works for all participant types; legacy `participantId`/`agentId` fallback
@@ -441,17 +458,18 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
   - `/who` — `GET /participants`, renders participant table with type and authority
   - `/leave` — disconnects and exits
   - `/kick <name>` — admin only; looks up participant by name, `POST /kick`
-  - `/mute <name>` — admin only; sets target to `standby-everyone` via `POST /set-mode`
-  - `/wake <name>` — admin only; sets target to `everyone` via `POST /set-mode`
+  - `/mute <name>` — admin only; demotes to observer via `POST /set-authority`
+  - `/unmute <name>` — admin only; restores to participant via `POST /set-authority`
   - `/setmode <name> <mode>` — admin only; sets specific mode via `POST /set-mode`
   - `/share [--as tier]` — generates share links via `POST /share`; observers blocked
 - **System events** — slash command output rendered as `{ kind: "system" }` DisplayEvent
 - **SSE uses Authorization header** — `POST /events` with `Authorization: Bearer <sessionToken>`
 - **Messages use session token** — `POST /message` with `{ token: sessionToken, content }`
-- **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` handles MessageSent, ParticipantJoined/Left, Activity (mode_changed)
+- **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` handles MessageSent, ParticipantJoined/Left, Activity (mode_changed, authority_changed)
 - **Participant type tracking** — maintains `participantTypes` map from initial list + join/leave SSE events
 - **Share info output** — prints copyable commands for invite, Claude Code connect, and OpenCode connect before TUI renders
 - **Graceful disconnect** — `POST /disconnect` with session token on Ctrl+C/SIGINT/SIGTERM
+- **`--headless` flag** — skips TUI; streams raw `RoomEvent` JSON lines to stdout, reads messages from stdin
 
 #### TUI (`tui.tsx`)
 
@@ -464,7 +482,8 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Message feed** — `<Static>` items rendered once (selectable terminal text)
 - **Color system** — stoops-app palette; agents get rotating color + deterministic sigil
 - **System events** — rendered in `C.secondary` color for slash command output
-- **Slash command autocomplete** — two-phase completion system: (1) typing `/` shows filtered command list with param hints (e.g. `/kick <name>`, `/setmode <name> <mode>`) and descriptions; (2) after completing a command, suggests parameter values — participant names for `<name>` params (dynamically tracked from join/leave events), engagement modes for `<mode>` param. Ghost text hints show unfilled params inline after the cursor. Arrow keys navigate, Tab completes, Enter completes (or submits directly for no-param commands), Escape dismisses; admin-only commands hidden for non-admins; 7 commands: `/who`, `/leave`, `/share`, `/kick`, `/mute`, `/wake`, `/setmode`
+- **Slash command autocomplete** — two-phase completion system: (1) typing `/` shows filtered command list with param hints (e.g. `/kick <name>`, `/setmode <name> <mode>`) and descriptions; (2) after completing a command, suggests parameter values — participant names for `<name>` params (dynamically tracked from join/leave events), engagement modes for `<mode>` param. Ghost text hints show unfilled params inline after the cursor. Arrow keys navigate, Tab completes, Enter completes (or submits directly for no-param commands), Escape dismisses; admin-only commands hidden for non-admins; 7 commands: `/who`, `/leave`, `/share`, `/kick`, `/mute`, `/unmute`, `/setmode`
+- **@mention autocomplete** — typing `@` followed by a partial name filters the participant list and shows suggestions; Tab/Enter completes with `@name ` (space appended); ghost text shows remaining characters of first match
 - **Ctrl+C handling** — ink's default exit disabled; custom `useInput` handler calls `onCtrlC`
 - **No resize handler** — removed to prevent Ink `<Static>` cursor miscalculation and screen corruption on terminal resize; divider width updates naturally on next state change
 
@@ -474,7 +493,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **Flow**: generate agent name → store `--join` URLs as pending (no HTTP join yet) → create empty SSE mux → create EventProcessor with empty selfId → create RuntimeMcpServer → wrap SSE source → build startup event → return setup
 - **`initialParts`** — used by OpenCode path only; Claude Code ignores it (`joinUrls: undefined` passed from `run.ts`) since auto-injecting via tmux had timing issues
 - **No auto-join** — rooms are NOT joined during setup; agent calls `join_room()` via MCP tool; `onJoinRoom` handles HTTP join + SSE registration + EventProcessor connection + sets selfId on first join; 15s timeout on the join fetch with a clear error message on failure
-- **`AgentRuntimeOptions`** — `joinUrls?`, `name?`, `admin?`, `extraArgs?` — `--join` is optional; no `--room`/`--server` legacy flags
+- **`AgentRuntimeOptions`** — `joinUrls?`, `name?`, `admin?`, `extraArgs?`, `headless?` — `--join` is optional; no `--room`/`--server` legacy flags
 - **`JoinResult`** — per-room join state: serverUrl, sessionToken, participantId, roomName, roomId, authority, participants, dataSource
 - **`AgentRuntimeSetup`** — returned by setup: agentName, joinResults (mutable, starts empty), initialParts, processor, sseMux, mcpServer, wrappedSource, cleanup()
 - **Startup event** — if `--join` URLs provided, `initialParts` = `"Use join_room(\"<url>\") to connect."` (single) or bulleted list (multiple); delivered before event loop via `processor.run()`
@@ -491,6 +510,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **tmuxAttach modes** — outside tmux: `spawn("tmux attach")` which keeps the event loop free; inside tmux (`$TMUX` set): `switch-client` + polls `has-session` every 500ms until session ends (switch-client exits immediately, so naive Promise resolution would trigger cleanup too early)
 - **Passthrough args** — everything after `--` forwarded to the `claude` command (e.g. `-- --model sonnet`)
 - **TmuxBridge delivery** — state-aware injection via `TmuxBridge.deliver()`; events delivered as plain text (no XML wrapping)
+- **`--headless` flag** — skips tmux entirely; delivers formatted events as plain text to stdout; prints MCP server URL to stderr; MCP tools callable directly via HTTP for scripted testing
 - **Cleanup** — stops TmuxBridge, `setup.cleanup()`, kills tmux session, removes temp directory
 
 #### TmuxBridge (`cli/claude/tmux-bridge.ts`)

@@ -193,13 +193,13 @@ Share links encode authority. The host gets admin and participant links at start
 ## Limitations
 
 - One room per server instance
-- No persistence (coming soon) — room state lives in memory, dies when the server stops
+- No persistence — room state lives in memory, dies when the server stops
 - macOS and Linux only (tmux requirement for agents)
 - Agents need the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) installed
 
 ## Contributing
 
-Issues and PRs welcome. See [GitHub Issues](https://github.com/izzat5233/stoops/issues) - Coming soon
+Issues and PRs welcome. See [GitHub Issues](https://github.com/izzat5233/stoops/issues).
 
 ```bash
 cd typescript

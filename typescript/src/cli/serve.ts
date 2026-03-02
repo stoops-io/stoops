@@ -9,6 +9,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 
 import { Room } from "../core/room.js";
 import { InMemoryStorage } from "../core/storage.js";
@@ -41,6 +42,8 @@ export interface ServeOptions {
   port?: number;
   share?: boolean;
   quiet?: boolean;
+  /** Suppress all human-readable output; emit one JSON line with server info on stdout. */
+  headless?: boolean;
 }
 
 export interface ServeResult {
@@ -72,6 +75,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   const roomName = options.room ?? randomRoomName();
   const port = options.port ?? 7890;
   const serverUrl = `http://127.0.0.1:${port}`;
+  const log = options.headless ? () => {} : logServer;
 
   let publicUrl = serverUrl;
   let tunnelProcess: ChildProcess | null = null;
@@ -318,7 +322,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
           authority: p.authority ?? "participant",
         }));
 
-        logServer(`${name} joined (${authority})`);
+        log(`${name} joined (${authority})`);
 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
@@ -397,6 +401,46 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
         return;
       }
 
+      // ── POST /set-authority ──────────────────────────────────────────────
+      if (url.pathname === "/set-authority") {
+        if (!session) return jsonError(res, 401, "Invalid session token");
+        if (session.authority !== "admin") return jsonError(res, 403, "Only admins can change authority");
+        const targetId = String(body.participantId ?? "");
+        const newAuthority = String(body.authority ?? "") as AuthorityLevel;
+        if (!targetId) return jsonError(res, 400, "Missing participantId");
+        if (!["admin", "participant", "observer"].includes(newAuthority)) {
+          return jsonError(res, 400, "Invalid authority. Must be admin, participant, or observer.");
+        }
+        if (targetId === session.id) return jsonError(res, 400, "Cannot change own authority");
+
+        // Update all three places: ConnectedParticipant, TokenManager session, Room participant
+        const targetSession = idToSession.get(targetId);
+        if (!targetSession) return jsonError(res, 404, "Participant not found");
+        const target = participants.get(targetSession);
+        if (!target) return jsonError(res, 404, "Participant not found");
+
+        target.authority = newAuthority;
+        tokens.updateSessionAuthority(targetSession, newAuthority);
+        room.setParticipantAuthority(targetId, newAuthority);
+
+        // Emit authority_changed activity event
+        const p = participants.get(sessionToken);
+        if (p) {
+          await p.channel.emit(createEvent<ActivityEvent>({
+            type: "Activity",
+            category: "ACTIVITY",
+            room_id: room.roomId,
+            participant_id: targetId,
+            action: "authority_changed",
+            detail: { authority: newAuthority },
+          }));
+        }
+
+        log(`${target.name} authority → ${newAuthority}`);
+        jsonOk(res);
+        return;
+      }
+
       // ── POST /kick ──────────────────────────────────────────────────────
       if (url.pathname === "/kick") {
         if (!session) return jsonError(res, 401, "Invalid session token");
@@ -420,7 +464,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
               sse.end();
               sseConnections.delete(targetId);
             }
-            logServer(`kicked ${targetId}`);
+            log(`kicked ${targetId}`);
           }
         }
 
@@ -476,7 +520,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
             tokens.revokeSessionToken(targetToken);
             const sse = sseConnections.get(p.id);
             if (sse) { sse.end(); sseConnections.delete(p.id); }
-            logServer(`${p.name} disconnected`);
+            log(`${p.name} disconnected`);
           }
 
           const o = observers.get(targetToken);
@@ -525,8 +569,19 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   const adminToken = tokens.generateShareToken("admin", "admin")!;
   const participantToken = tokens.generateShareToken("admin", "participant")!;
 
-  if (!options.quiet) {
-    const version = process.env.npm_package_version ?? "0.3.0";
+  if (options.headless) {
+    process.stdout.write(JSON.stringify({ serverUrl, publicUrl, roomName, adminToken, participantToken }) + "\n");
+  } else if (!options.quiet) {
+    let version = process.env.npm_package_version ?? "";
+    if (!version) {
+      try {
+        const require = createRequire(import.meta.url);
+        const pkg = require("../../package.json");
+        version = pkg.version ?? "unknown";
+      } catch {
+        version = "unknown";
+      }
+    }
     const adminUrl = buildShareUrl(publicUrl, adminToken);
     const joinUrl = buildShareUrl(publicUrl, participantToken);
 
@@ -545,7 +600,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   // ── Graceful shutdown ──────────────────────────────────────────────────
 
   const shutdown = async () => {
-    logServer("shutting down...");
+    log("shutting down...");
     if (tunnelProcess) { tunnelProcess.kill(); tunnelProcess = null; }
     for (const [id, sse] of sseConnections) { sse.end(); sseConnections.delete(id); }
     for (const p of participants.values()) { await p.channel.disconnect().catch(() => {}); }

@@ -33,6 +33,8 @@ export interface AgentRuntimeOptions {
   name?: string;
   admin?: boolean;
   extraArgs?: string[];
+  /** Skip tmux/UI — deliver events as plain text to stdout. MCP server still runs. */
+  headless?: boolean;
   /** Called after a room is successfully joined via join_room MCP tool. */
   onRoomJoined?: () => void | Promise<void>;
 }
@@ -145,10 +147,11 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
         dataSource.setParticipants(participants);
         dataSource.setSelf(newParticipantId, agentName);
 
-        // Set selfId on first join
+        // Set global selfId on first join; always set per-room selfId
         if (joinResults.length === 0) {
           processor.participantId = newParticipantId;
         }
+        processor.setRoomParticipantId(roomId, newParticipantId);
 
         // Register in EventProcessor and SSE multiplexer
         const mode = processor.getModeForRoom(roomId) ?? "everyone";
@@ -235,6 +238,46 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, mode }),
+        });
+        if (!res.ok) return { success: false, error: await res.text() };
+        return { success: true };
+      } catch {
+        return { success: false, error: "Server unreachable." };
+      }
+    } : undefined,
+    onAdminMute: options.admin ? async (room, participant) => {
+      const conn = processor.resolve(room);
+      if (!conn) return { success: false, error: `Unknown room "${room}".` };
+      const ds = conn.dataSource as RemoteRoomDataSource;
+
+      const p = conn.dataSource.listParticipants().find((pp) => pp.name === participant);
+      if (!p) return { success: false, error: `Unknown participant "${participant}".` };
+
+      try {
+        const res = await fetch(`${ds.serverUrl}/set-authority`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "observer" }),
+        });
+        if (!res.ok) return { success: false, error: await res.text() };
+        return { success: true };
+      } catch {
+        return { success: false, error: "Server unreachable." };
+      }
+    } : undefined,
+    onAdminUnmute: options.admin ? async (room, participant) => {
+      const conn = processor.resolve(room);
+      if (!conn) return { success: false, error: `Unknown room "${room}".` };
+      const ds = conn.dataSource as RemoteRoomDataSource;
+
+      const p = conn.dataSource.listParticipants().find((pp) => pp.name === participant);
+      if (!p) return { success: false, error: `Unknown participant "${participant}".` };
+
+      try {
+        const res = await fetch(`${ds.serverUrl}/set-authority`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "participant" }),
         });
         if (!res.ok) return { success: false, error: await res.text() };
         return { success: true };
