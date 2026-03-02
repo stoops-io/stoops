@@ -8,6 +8,8 @@ import type {
   MentionedEvent,
   ParticipantJoinedEvent,
   ParticipantLeftEvent,
+  ParticipantKickedEvent,
+  AuthorityChangedEvent,
   ReactionAddedEvent,
   ReactionRemovedEvent,
   ContextCompactedEvent,
@@ -435,6 +437,93 @@ describe("ParticipantJoined/Left formatting", () => {
     const parts = formatEvent(event, resolve, null, "Kitchen");
     const text = textOf(parts);
     expect(text).toMatch(/\[\d{2}:\d{2}:\d{2}\]/);
+  });
+});
+
+// ── ParticipantKicked/AuthorityChanged formatting ────────────────────────────
+
+describe("ParticipantKicked formatting", () => {
+  test("kicked shows participant name", () => {
+    const event = createEvent<ParticipantKickedEvent>({
+      type: "ParticipantKicked",
+      category: "PRESENCE",
+      room_id: "room-1",
+      participant_id: alice.id,
+      participant: alice,
+      kicked_by: "Admin",
+    });
+
+    const parts = formatEvent(event, resolve, null, "Kitchen");
+    const text = textOf(parts);
+    expect(text).toContain("[Kitchen]");
+    expect(text).toContain("Alice was kicked");
+  });
+
+  test("kicked without room label omits prefix", () => {
+    const event = createEvent<ParticipantKickedEvent>({
+      type: "ParticipantKicked",
+      category: "PRESENCE",
+      room_id: "room-1",
+      participant_id: alice.id,
+      participant: alice,
+      kicked_by: "Admin",
+    });
+
+    const parts = formatEvent(event, resolve);
+    const text = textOf(parts);
+    expect(text).not.toContain("[Kitchen]");
+    expect(text).toContain("Alice was kicked");
+  });
+});
+
+describe("AuthorityChanged formatting", () => {
+  test("mute shows 'was muted'", () => {
+    const event = createEvent<AuthorityChangedEvent>({
+      type: "AuthorityChanged",
+      category: "PRESENCE",
+      room_id: "room-1",
+      participant_id: alice.id,
+      participant: alice,
+      new_authority: "observer",
+      changed_by: "Admin",
+    });
+
+    const parts = formatEvent(event, resolve, null, "Kitchen");
+    const text = textOf(parts);
+    expect(text).toContain("[Kitchen]");
+    expect(text).toContain("Alice was muted");
+  });
+
+  test("unmute shows 'was unmuted'", () => {
+    const event = createEvent<AuthorityChangedEvent>({
+      type: "AuthorityChanged",
+      category: "PRESENCE",
+      room_id: "room-1",
+      participant_id: alice.id,
+      participant: alice,
+      new_authority: "participant",
+      changed_by: "Admin",
+    });
+
+    const parts = formatEvent(event, resolve);
+    const text = textOf(parts);
+    expect(text).toContain("Alice was unmuted");
+  });
+
+  test("promotion to admin shows arrow format", () => {
+    const event = createEvent<AuthorityChangedEvent>({
+      type: "AuthorityChanged",
+      category: "PRESENCE",
+      room_id: "room-1",
+      participant_id: alice.id,
+      participant: alice,
+      new_authority: "admin",
+      changed_by: "Admin",
+    });
+
+    const parts = formatEvent(event, resolve);
+    const text = textOf(parts);
+    expect(text).toContain("Alice → admin");
   });
 });
 

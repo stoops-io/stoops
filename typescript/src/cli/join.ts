@@ -569,6 +569,23 @@ function toDisplayEvent(
         name: event.participant.name,
         participantType: event.participant.type,
       };
+    case "ParticipantKicked":
+      return {
+        id: randomUUID(),
+        ts,
+        kind: "system",
+        content: `${event.participant.name} was kicked`,
+      };
+    case "AuthorityChanged": {
+      const name = event.participant.name;
+      if (event.new_authority === "observer") {
+        return { id: randomUUID(), ts, kind: "system", content: `${name} was muted` };
+      }
+      if (event.new_authority === "participant") {
+        return { id: randomUUID(), ts, kind: "system", content: `${name} was unmuted` };
+      }
+      return { id: randomUUID(), ts, kind: "system", content: `${name} → ${event.new_authority}` };
+    }
     case "Activity":
       if (event.action === "mode_changed") {
         return {
@@ -576,15 +593,6 @@ function toDisplayEvent(
           ts,
           kind: "mode",
           mode: String((event.detail as Record<string, unknown>)?.mode ?? ""),
-        };
-      }
-      if (event.action === "authority_changed") {
-        const newAuth = String((event.detail as Record<string, unknown>)?.authority ?? "");
-        return {
-          id: randomUUID(),
-          ts,
-          kind: "system",
-          content: `authority → ${newAuth}`,
         };
       }
       return null;
