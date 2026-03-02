@@ -72,11 +72,11 @@ export class TokenManager {
   }
 }
 
-/** Authority tier ordering: admin > participant > observer. */
+/** Authority tier ordering: admin > member > guest. */
 const TIER_ORDER: Record<AuthorityLevel, number> = {
   admin: 2,
-  participant: 1,
-  observer: 0,
+  member: 1,
+  guest: 0,
 };
 
 /** Can a caller at `callerLevel` grant authority at `targetLevel`? */

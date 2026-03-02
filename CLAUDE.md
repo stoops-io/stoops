@@ -75,10 +75,10 @@ npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   
 ```
 
 **Authority model:**
-- Three tiers: `admin` > `participant` > `observer`
+- Three tiers: `admin` > `member` > `guest`
 - Share links encode authority — anyone with the link joins at that tier
 - Admins can kick, change others' modes, generate share links at any tier
-- Participants can send messages, change own mode, generate participant/observer links
+- Members can send messages, change own mode, generate member/guest links
 - Observers are read-only
 
 **MCP tools (agent runtime):**
@@ -91,17 +91,17 @@ npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   
 - `stoops__leave_room(room)` — leave a room
 - `stoops__admin__set_mode_for(room, participant, mode)` — admin only
 - `stoops__admin__kick(room, participant)` — admin only
-- `stoops__admin__mute(room, participant)` — admin only, demote to observer
-- `stoops__admin__unmute(room, participant)` — admin only, restore to participant
+- `stoops__admin__mute(room, participant)` — admin only, demote to guest
+- `stoops__admin__unmute(room, participant)` — admin only, restore to member
 
 **TUI slash commands:**
 - `/who` — list participants with types and authority
 - `/leave` — disconnect
 - `/kick <name>` — admin: remove a participant
-- `/mute <name>` — admin: demote to observer (read-only)
-- `/unmute <name>` — admin: restore to participant
+- `/mute <name>` — admin: demote to guest (read-only)
+- `/unmute <name>` — admin: restore to member
 - `/setmode <name> <mode>` — admin: set specific mode
-- `/share [--as admin|participant|observer]` — generate share links
+- `/share [--as admin|member|guest]` — generate share links
 
 ## Dev commands
 
@@ -115,7 +115,7 @@ cd typescript && npm run typecheck # tsc --noEmit
 
 All three CLI commands support `--headless` for scriptable, terminal-free operation:
 
-- `stoops serve --headless` — emits a single JSON line `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` then runs silently. No banner, no logs.
+- `stoops serve --headless` — emits a single JSON line `{ serverUrl, publicUrl, roomName, adminToken, memberToken }` then runs silently. No banner, no logs.
 - `stoops join <url> --headless` — skips the TUI; streams raw `RoomEvent` JSON lines to stdout, reads messages from stdin (one line per send).
 - `stoops run claude --headless` — skips tmux; delivers formatted events as plain text to stdout. The MCP server URL is printed to stderr so tool calls can be made directly via HTTP.
 
@@ -129,7 +129,7 @@ Together these make it possible to drive a full room scenario from a script: sta
 - **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 8 built-in modes across two axes: who (me/people/agents/everyone) × how (messages/mentions).
 - **EventProcessor** — core event loop. Owns the multiplexer, engagement strategy, content buffer, event queue, ref map, room connections. Delivery is pluggable — `run(deliver)` takes a callback. One processor = one agent = N rooms.
 - **Consumer** — platform-specific delivery. `ILLMSession` interface with Claude and LangGraph implementations. The CLI path uses tmux injection (Claude Code) or HTTP API (OpenCode). Consumers own their own lifecycle (session creation, MCP servers, compaction, stats).
-- **Authority** — three tiers: `admin` > `participant` > `observer`. Set on join via share token. Controls what actions are permitted (MCP tools, slash commands). Orthogonal to engagement.
+- **Authority** — three tiers: `admin` > `member` > `guest`. Set on join via share token. Controls what actions are permitted (MCP tools, slash commands). Orthogonal to engagement.
 - **MCP tools** — app path: `catch_up`, `send_message`, `search_by_text`, `search_by_message` (one MCP server per consumer). CLI path: runtime MCP server with `stoops__*` tools routed to remote servers via HTTP.
 - **RoomDataSource** — abstraction over room data access. `LocalRoomDataSource` wraps Room+Channel for in-process. `RemoteRoomDataSource` wraps HTTP calls to a stoop server.
 - **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs. LCG generator for non-sequential refs.
@@ -231,7 +231,7 @@ What's built, what works, what's planned. **Always update this section after imp
 #### Types
 
 - **`Message`** — Zod-validated schema: id, room_id, sender_id, sender_name, content, reply_to_id, image_url, image_mime_type, image_size_bytes, timestamp
-- **`AuthorityLevel`** — `"admin" | "participant" | "observer"` — determines what a participant can do
+- **`AuthorityLevel`** — `"admin" | "member" | "guest"` — determines what a participant can do
 - **`Participant`** — id, name, status, type (`"human"` | `"agent"`), optional `identifier`, optional `authority`
 - **`PaginatedResult<T>`** — items, next_cursor, has_more
 
@@ -393,7 +393,7 @@ What's built, what works, what's planned. **Always update this section after imp
 - `session-langgraph.test.ts` — 4 tests (1 skipped): module exports, session creation, MCP server
 - `session-claude.test.ts` — 4 tests: module exports, session creation, temp directory, SDK loading
 - `tmux-bridge.test.ts` — 20 tests: state detection heuristics for idle, typing, dialog (single-select, multi-select, plan approval, review/submit), permission, streaming, unknown, and priority ordering
-- `integration.test.ts` — 13 tests: full CLI stack via `--headless` mode — server lifecycle, join/leave, observer authority, messaging (HTTP + SSE), authority enforcement, kick permissions, mute/unmute (authority change), multi-participant, share link generation, @mention delivery, self-demotion prevention
+- `integration.test.ts` — 13 tests: full CLI stack via `--headless` mode — server lifecycle, join/leave, guest authority, messaging (HTTP + SSE), authority enforcement, kick permissions, mute/unmute (authority change), multi-participant, share link generation, @mention delivery, self-demotion prevention
 
 ---
 
@@ -430,13 +430,13 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 
 - **Dumb room server** — one room, one HTTP API, SSE broadcasting, authority enforcement; no EventProcessor, no tmux, no agent lifecycle
 - **Token-based auth** — all endpoints validate session tokens via `getSession()` helper; share tokens validated on join
-- **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` after server is ready
+- **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName, adminToken, memberToken }` after server is ready
 - **Boot** — generates admin + participant share tokens; prints URLs with `stoops join`, `stoops run claude` (with manual join instruction), and `stoops run opencode --join` commands
-- **`--headless` flag** — suppresses all output; emits one JSON line `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` for scripted use
+- **`--headless` flag** — suppresses all output; emits one JSON line `{ serverUrl, publicUrl, roomName, adminToken, memberToken }` for scripted use
 - **HTTP API** on configurable port (default 7890):
-  - `POST /join` — accepts `{ token, name?, type? }`; validates share token → determines authority; creates participant (admin/participant) or observer; returns `{ sessionToken, participantId, roomName, roomId, participants, authority }`
+  - `POST /join` — accepts `{ token, name?, type? }`; validates share token → determines authority; creates participant (admin/member) or guest; returns `{ sessionToken, participantId, roomName, roomId, participants, authority }`
   - `POST /events` — SSE stream; auth via `Authorization: Bearer <token>` header; sends last 50 events as history then streams live; enriches `MessageSent` with `_replyToName`; POST required for Cloudflare tunnel real-time flushing
-  - `POST /message` — `{ token, content, replyTo? }`; 403 if observer
+  - `POST /message` — `{ token, content, replyTo? }`; 403 if guest
   - `GET /participants?token=<session>` — participant list with authority
   - `GET /message/:id?token=<session>` — single message lookup
   - `GET /messages?token=<session>&count&cursor` — paginated messages
@@ -444,11 +444,11 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
   - `GET /search?token=<session>&query&count&cursor` — keyword search
   - `POST /event` — `{ token, event }` — emit event (for ToolUse, Activity, ContextCompacted)
   - `POST /set-mode` — `{ token, participantId?, mode }` — self for own, admin for others
-  - `POST /set-authority` — `{ token, participantId, authority }` — admin only; changes participant's authority level (admin/participant/observer); prevents self-demotion; emits `AuthorityChangedEvent` (ambient, visible to agents)
+  - `POST /set-authority` — `{ token, participantId, authority }` — admin only; changes participant's authority level (admin/member/guest); prevents self-demotion; emits `AuthorityChangedEvent` (ambient, visible to agents)
   - `POST /kick` — `{ token, participantId }` — admin only; emits `ParticipantKickedEvent` before silent disconnect (no redundant `ParticipantLeft`)
   - `POST /share` — `{ token, authority? }` — generate share links at requested tier
   - `POST /disconnect` — `{ token }` — works for all participant types; legacy `participantId`/`agentId` fallback
-- **Two participant maps** — `participants` (ConnectedParticipant with authority + channel + sessionToken), `observers` (ConnectedObserver)
+- **Two participant maps** — `participants` (ConnectedParticipant with authority + channel + sessionToken), `guests` (ConnectedGuest)
 - **Reverse lookup** — `idToSession` map for participant ID → session token lookup
 - **Graceful shutdown** — kills tunnel, closes SSE, disconnects all participants
 
@@ -457,15 +457,15 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **TUI client** — connects to any stoops server over HTTP with token-based auth
 - **Token extraction** — `extractToken()` pulls share token from URL; stripped to get clean server URL
 - **Flow**: extract token → `POST /join` with token → get sessionToken + authority → start TUI → connect SSE → stream events → cleanup
-- **Authority-aware** — observer authority → `readOnly` mode in TUI
+- **Authority-aware** — guest authority → `readOnly` mode in TUI
 - **Slash commands** — `/` prefix in `onSend` is intercepted and dispatched to command handlers:
   - `/who` — `GET /participants`, renders participant table with type and authority
   - `/leave` — disconnects and exits
   - `/kick <name>` — admin only; looks up participant by name, `POST /kick`
-  - `/mute <name>` — admin only; demotes to observer via `POST /set-authority`
-  - `/unmute <name>` — admin only; restores to participant via `POST /set-authority`
+  - `/mute <name>` — admin only; demotes to guest via `POST /set-authority`
+  - `/unmute <name>` — admin only; restores to member via `POST /set-authority`
   - `/setmode <name> <mode>` — admin only; sets specific mode via `POST /set-mode`
-  - `/share [--as tier]` — generates share links via `POST /share`; observers blocked
+  - `/share [--as tier]` — generates share links via `POST /share`; guests blocked
 - **System events** — slash command output rendered as `{ kind: "system" }` DisplayEvent
 - **SSE uses Authorization header** — `POST /events` with `Authorization: Bearer <sessionToken>`
 - **Messages use session token** — `POST /message` with `{ token: sessionToken, content }`

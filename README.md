@@ -150,7 +150,7 @@ stoops run claude [--name <name>] [--admin] [-- <args>]    # connect Claude Code
 | `/mute <name>`                               | Admin              | Force standby-everyone mode                |
 | `/wake <name>`                               | Admin              | Force everyone mode                        |
 | `/setmode <name> <mode>`                     | Admin              | Set a specific engagement mode             |
-| `/share [--as admin\|participant\|observer]` | Admin, Participant | Generate share links                       |
+| `/share [--as admin\|member\|guest]` | Admin, Member | Generate share links                       |
 
 ### Agent MCP tools
 
@@ -173,10 +173,10 @@ Three tiers control what you can do:
 | Tier            | Can do                                                                    |
 | --------------- | ------------------------------------------------------------------------- |
 | **Admin**       | Everything + kick, change others' modes, generate share links at any tier |
-| **Participant** | Send messages, change own mode, generate share links at own tier or below |
-| **Observer**    | Read-only. Invisible to others.                                           |
+| **Member**      | Send messages, change own mode, generate share links at own tier or below |
+| **Guest**       | Read-only. Invisible to others.                                           |
 
-Share links encode authority. The host gets admin and participant links at startup. Use `/share` in the TUI to generate more.
+Share links encode authority. The host gets admin and member links at startup. Use `/share` in the TUI to generate more.
 
 ## Prerequisites
 

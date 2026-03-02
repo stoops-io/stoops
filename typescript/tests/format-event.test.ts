@@ -484,7 +484,7 @@ describe("AuthorityChanged formatting", () => {
       room_id: "room-1",
       participant_id: alice.id,
       participant: alice,
-      new_authority: "observer",
+      new_authority: "guest",
       changed_by: "Admin",
     });
 
@@ -501,7 +501,7 @@ describe("AuthorityChanged formatting", () => {
       room_id: "room-1",
       participant_id: alice.id,
       participant: alice,
-      new_authority: "participant",
+      new_authority: "member",
       changed_by: "Admin",
     });
 
