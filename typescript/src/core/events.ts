@@ -144,7 +144,7 @@ export interface ParticipantKickedEvent extends BaseRoomEvent {
 /**
  * A participant's authority level was changed by an admin.
  *
- * Covers mute (→ observer), unmute (→ participant), and promotion (→ admin).
+ * Covers mute (→ guest), unmute (→ member), and promotion (→ admin).
  */
 export interface AuthorityChangedEvent extends BaseRoomEvent {
   type: "AuthorityChanged";

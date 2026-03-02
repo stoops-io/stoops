@@ -60,9 +60,9 @@ export interface RuntimeMcpServerOptions {
   onAdminSetModeFor?: (room: string, participant: string, mode: string) => Promise<{ success: boolean; error?: string }>;
   /** Called for admin kick. */
   onAdminKick?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
-  /** Called for admin mute (demote to observer). */
+  /** Called for admin mute (demote to guest). */
   onAdminMute?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
-  /** Called for admin unmute (restore to participant). */
+  /** Called for admin unmute (restore to member). */
   onAdminUnmute?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -297,7 +297,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
 
     server.tool(
       "stoops__admin__mute",
-      "Admin: make a participant read-only (demote to observer).",
+      "Admin: make a participant read-only (demote to guest).",
       {
         room: z.string().describe("Room name"),
         participant: z.string().describe("Participant name to mute"),
@@ -307,14 +307,14 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         if (!opts.onAdminMute) return textResult("Admin mute not supported.");
         const result = await opts.onAdminMute(room, participant);
         return result.success
-          ? textResult(`Muted ${participant} in [${room}] (observer).`)
+          ? textResult(`Muted ${participant} in [${room}] (guest).`)
           : textResult(result.error ?? "Failed to mute participant.");
       },
     );
 
     server.tool(
       "stoops__admin__unmute",
-      "Admin: restore a muted participant (promote to participant).",
+      "Admin: restore a muted participant (promote to member).",
       {
         room: z.string().describe("Room name"),
         participant: z.string().describe("Participant name to unmute"),
@@ -324,7 +324,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         if (!opts.onAdminUnmute) return textResult("Admin unmute not supported.");
         const result = await opts.onAdminUnmute(room, participant);
         return result.success
-          ? textResult(`Unmuted ${participant} in [${room}] (participant).`)
+          ? textResult(`Unmuted ${participant} in [${room}] (member).`)
           : textResult(result.error ?? "Failed to unmute participant.");
       },
     );

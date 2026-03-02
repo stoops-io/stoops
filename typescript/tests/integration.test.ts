@@ -25,7 +25,7 @@ interface ServerHandle {
   publicUrl: string;
   roomName: string;
   adminToken: string;
-  participantToken: string;
+  memberToken: string;
   cleanup: () => void;
 }
 
@@ -65,7 +65,7 @@ async function startServer(opts?: { port?: number; room?: string }): Promise<Ser
           publicUrl: data.publicUrl,
           roomName: data.roomName,
           adminToken: data.adminToken,
-          participantToken: data.participantToken,
+          memberToken: data.memberToken,
           cleanup: () => {
             child.kill("SIGTERM");
           },
@@ -254,13 +254,13 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     expect(server.serverUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(server.roomName).toBeTruthy();
     expect(server.adminToken).toBeTruthy();
-    expect(server.participantToken).toBeTruthy();
+    expect(server.memberToken).toBeTruthy();
 
     // Verify server is reachable
     const res = await fetch(`${server.serverUrl}/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: server.participantToken, name: "probe", type: "human" }),
+      body: JSON.stringify({ token: server.memberToken, name: "probe", type: "human" }),
     });
     expect(res.ok).toBe(true);
   }, 15_000);
@@ -271,8 +271,8 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     const server = await startServer();
     servers.push(server);
 
-    const join1 = await httpJoin(server.serverUrl, server.participantToken, { name: "Alice" });
-    expect(join1.authority).toBe("participant");
+    const join1 = await httpJoin(server.serverUrl, server.memberToken, { name: "Alice" });
+    expect(join1.authority).toBe("member");
     expect(join1.roomName).toBe(server.roomName);
 
     const list = await httpParticipants(server.serverUrl, join1.sessionToken);
@@ -281,7 +281,7 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     await httpDisconnect(server.serverUrl, join1.sessionToken);
 
     // Join again to check participant list
-    const join2 = await httpJoin(server.serverUrl, server.participantToken, { name: "Bob" });
+    const join2 = await httpJoin(server.serverUrl, server.memberToken, { name: "Bob" });
     const list2 = await httpParticipants(server.serverUrl, join2.sessionToken);
     expect(list2.find((p) => p.name === "Alice")).toBeFalsy();
     expect(list2.find((p) => p.name === "Bob")).toBeTruthy();
@@ -289,23 +289,23 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
 
   // ── 3. Observer join ──────────────────────────────────────────────────
 
-  test("observer joins with observer authority", async () => {
+  test("guest joins with guest authority", async () => {
     const server = await startServer();
     servers.push(server);
 
-    // Generate observer token
+    // Generate guest token
     const admin = await httpJoin(server.serverUrl, server.adminToken, { name: "Admin" });
     const shareRes = await fetch(`${server.serverUrl}/share`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: admin.sessionToken, authority: "observer" }),
+      body: JSON.stringify({ token: admin.sessionToken, authority: "guest" }),
     });
     const shareData = (await shareRes.json()) as { links: Record<string, string> };
-    const observerUrl = shareData.links.observer;
-    const observerToken = new URL(observerUrl).searchParams.get("token")!;
+    const guestUrl = shareData.links.guest;
+    const guestToken = new URL(guestUrl).searchParams.get("token")!;
 
-    const obs = await httpJoin(server.serverUrl, observerToken, { name: "Watcher" });
-    expect(obs.authority).toBe("observer");
+    const obs = await httpJoin(server.serverUrl, guestToken, { name: "Watcher" });
+    expect(obs.authority).toBe("guest");
   }, 15_000);
 
   // ── 4. Messaging ──────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     const server = await startServer();
     servers.push(server);
 
-    const alice = await httpJoin(server.serverUrl, server.participantToken, { name: "Alice" });
+    const alice = await httpJoin(server.serverUrl, server.memberToken, { name: "Alice" });
     await httpSend(server.serverUrl, alice.sessionToken, "hello world unique123");
 
     // Search for the message
@@ -330,11 +330,11 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     const server = await startServer();
     servers.push(server);
 
-    const client = await joinHeadless(server.serverUrl, server.participantToken, { name: "Eve" });
+    const client = await joinHeadless(server.serverUrl, server.memberToken, { name: "Eve" });
     clients.push(client);
 
     // Send a message from another participant
-    const bob = await httpJoin(server.serverUrl, server.participantToken, { name: "Bob" });
+    const bob = await httpJoin(server.serverUrl, server.memberToken, { name: "Bob" });
     await httpSend(server.serverUrl, bob.sessionToken, "ping from bob");
 
     const event = await client.waitForEvent(
@@ -345,7 +345,7 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
 
   // ── 5. Authority enforcement ──────────────────────────────────────────
 
-  test("observer cannot send messages", async () => {
+  test("guest cannot send messages", async () => {
     const server = await startServer();
     servers.push(server);
 
@@ -353,13 +353,13 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     const shareRes = await fetch(`${server.serverUrl}/share`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: admin.sessionToken, authority: "observer" }),
+      body: JSON.stringify({ token: admin.sessionToken, authority: "guest" }),
     });
     const shareData = (await shareRes.json()) as { links: Record<string, string> };
-    const observerToken = new URL(shareData.links.observer).searchParams.get("token")!;
+    const guestToken = new URL(shareData.links.guest).searchParams.get("token")!;
 
-    const obs = await httpJoin(server.serverUrl, observerToken);
-    expect(obs.authority).toBe("observer");
+    const obs = await httpJoin(server.serverUrl, guestToken);
+    expect(obs.authority).toBe("guest");
 
     const sendRes = await fetch(`${server.serverUrl}/message`, {
       method: "POST",
@@ -375,8 +375,8 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     const server = await startServer();
     servers.push(server);
 
-    const alice = await httpJoin(server.serverUrl, server.participantToken, { name: "Alice" });
-    const bob = await httpJoin(server.serverUrl, server.participantToken, { name: "Bob" });
+    const alice = await httpJoin(server.serverUrl, server.memberToken, { name: "Alice" });
+    const bob = await httpJoin(server.serverUrl, server.memberToken, { name: "Bob" });
 
     const kickRes = await fetch(`${server.serverUrl}/kick`, {
       method: "POST",
@@ -393,7 +393,7 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     servers.push(server);
 
     const admin = await httpJoin(server.serverUrl, server.adminToken, { name: "Admin" });
-    const target = await httpJoin(server.serverUrl, server.participantToken, { name: "Target" });
+    const target = await httpJoin(server.serverUrl, server.memberToken, { name: "Target" });
 
     const kickRes = await fetch(`${server.serverUrl}/kick`, {
       method: "POST",
@@ -408,12 +408,12 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
 
   // ── 8. Mute/unmute (authority change) ─────────────────────────────────
 
-  test("admin can mute (demote to observer) and unmute (restore to participant)", async () => {
+  test("admin can mute (demote to guest) and unmute (restore to member)", async () => {
     const server = await startServer();
     servers.push(server);
 
     const admin = await httpJoin(server.serverUrl, server.adminToken, { name: "Admin" });
-    const alice = await httpJoin(server.serverUrl, server.participantToken, { name: "Alice" });
+    const alice = await httpJoin(server.serverUrl, server.memberToken, { name: "Alice" });
 
     // Verify Alice can send before mute
     const send1 = await fetch(`${server.serverUrl}/message`, {
@@ -423,14 +423,14 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     });
     expect(send1.ok).toBe(true);
 
-    // Mute Alice (demote to observer)
+    // Mute Alice (demote to guest)
     const muteRes = await fetch(`${server.serverUrl}/set-authority`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         token: admin.sessionToken,
         participantId: alice.participantId,
-        authority: "observer",
+        authority: "guest",
       }),
     });
     expect(muteRes.ok).toBe(true);
@@ -443,14 +443,14 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     });
     expect(send2.status).toBe(403);
 
-    // Unmute Alice (restore to participant)
+    // Unmute Alice (restore to member)
     const unmuteRes = await fetch(`${server.serverUrl}/set-authority`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         token: admin.sessionToken,
         participantId: alice.participantId,
-        authority: "participant",
+        authority: "member",
       }),
     });
     expect(unmuteRes.ok).toBe(true);
@@ -470,9 +470,9 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     const server = await startServer();
     servers.push(server);
 
-    const alice = await httpJoin(server.serverUrl, server.participantToken, { name: "Alice" });
-    const bob = await httpJoin(server.serverUrl, server.participantToken, { name: "Bob" });
-    const charlie = await httpJoin(server.serverUrl, server.participantToken, { name: "Charlie" });
+    const alice = await httpJoin(server.serverUrl, server.memberToken, { name: "Alice" });
+    const bob = await httpJoin(server.serverUrl, server.memberToken, { name: "Bob" });
+    const charlie = await httpJoin(server.serverUrl, server.memberToken, { name: "Charlie" });
 
     const list = await httpParticipants(server.serverUrl, alice.sessionToken);
     const names = list.map((p) => p.name);
@@ -496,11 +496,11 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     });
     const adminLinks = ((await adminShareRes.json()) as { links: Record<string, string> }).links;
     expect(adminLinks.admin).toBeTruthy();
-    expect(adminLinks.participant).toBeTruthy();
-    expect(adminLinks.observer).toBeTruthy();
+    expect(adminLinks.member).toBeTruthy();
+    expect(adminLinks.guest).toBeTruthy();
 
-    // Participant only gets participant + observer
-    const part = await httpJoin(server.serverUrl, server.participantToken, { name: "Part" });
+    // Member only gets member + guest
+    const part = await httpJoin(server.serverUrl, server.memberToken, { name: "Part" });
     const partShareRes = await fetch(`${server.serverUrl}/share`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -508,8 +508,8 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     });
     const partLinks = ((await partShareRes.json()) as { links: Record<string, string> }).links;
     expect(partLinks.admin).toBeUndefined();
-    expect(partLinks.participant).toBeTruthy();
-    expect(partLinks.observer).toBeTruthy();
+    expect(partLinks.member).toBeTruthy();
+    expect(partLinks.guest).toBeTruthy();
   }, 15_000);
 
   // ── 11. @mention delivery ─────────────────────────────────────────────
@@ -519,11 +519,11 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     servers.push(server);
 
     // Alice joins via headless to receive SSE events
-    const alice = await joinHeadless(server.serverUrl, server.participantToken, { name: "Alice" });
+    const alice = await joinHeadless(server.serverUrl, server.memberToken, { name: "Alice" });
     clients.push(alice);
 
     // Bob joins via HTTP and sends @Alice
-    const bob = await httpJoin(server.serverUrl, server.participantToken, { name: "Bob" });
+    const bob = await httpJoin(server.serverUrl, server.memberToken, { name: "Bob" });
     await httpSend(server.serverUrl, bob.sessionToken, "hey @Alice what do you think?");
 
     // Alice should receive the MessageSent event
@@ -547,7 +547,7 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
       body: JSON.stringify({
         token: admin.sessionToken,
         participantId: admin.participantId,
-        authority: "observer",
+        authority: "guest",
       }),
     });
     expect(res.status).toBe(400);
@@ -559,8 +559,8 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
     const server = await startServer();
     servers.push(server);
 
-    const alice = await httpJoin(server.serverUrl, server.participantToken, { name: "Alice" });
-    const bob = await httpJoin(server.serverUrl, server.participantToken, { name: "Bob" });
+    const alice = await httpJoin(server.serverUrl, server.memberToken, { name: "Alice" });
+    const bob = await httpJoin(server.serverUrl, server.memberToken, { name: "Bob" });
 
     const res = await fetch(`${server.serverUrl}/set-authority`, {
       method: "POST",
@@ -568,7 +568,7 @@ describe.skipIf(!HAS_BUILD)("Integration", () => {
       body: JSON.stringify({
         token: alice.sessionToken,
         participantId: bob.participantId,
-        authority: "observer",
+        authority: "guest",
       }),
     });
     expect(res.status).toBe(403);

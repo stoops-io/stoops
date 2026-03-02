@@ -191,10 +191,10 @@ export function formatEvent(
     }
     case "AuthorityChanged": {
       const name = event.participant?.name ?? "someone";
-      if (event.new_authority === "observer") {
+      if (event.new_authority === "guest") {
         return [{ type: "text", text: `${ts}${r}${name} was muted` }];
       }
-      if (event.new_authority === "participant") {
+      if (event.new_authority === "member") {
         return [{ type: "text", text: `${ts}${r}${name} was unmuted` }];
       }
       return [{ type: "text", text: `${ts}${r}${name} → ${event.new_authority}` }];

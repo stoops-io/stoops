@@ -135,7 +135,7 @@ async function main(): Promise<void> {
     const adminJoinUrl = buildShareUrl(result.serverUrl, result.adminToken);
     const participantShareUrl = buildShareUrl(
       result.publicUrl !== result.serverUrl ? result.publicUrl : result.serverUrl,
-      result.participantToken,
+      result.memberToken,
     );
 
     await join({

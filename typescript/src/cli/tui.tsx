@@ -68,10 +68,10 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/kick",    description: "Remove a participant", adminOnly: true, params: [
     { label: "name", completions: "participants" },
   ]},
-  { name: "/mute",    description: "Make read-only (observer)", adminOnly: true, params: [
+  { name: "/mute",    description: "Make read-only (guest)", adminOnly: true, params: [
     { label: "name", completions: "participants" },
   ]},
-  { name: "/unmute",  description: "Restore to participant", adminOnly: true, params: [
+  { name: "/unmute",  description: "Restore to member", adminOnly: true, params: [
     { label: "name", completions: "participants" },
   ]},
   { name: "/setmode", description: "Set engagement mode", adminOnly: true, params: [

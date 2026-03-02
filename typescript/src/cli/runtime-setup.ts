@@ -139,7 +139,7 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
         const sessionToken = String(data.sessionToken ?? "");
         const roomName = alias ?? String(data.roomName ?? "");
         const roomId = String(data.roomId ?? "");
-        const authority = String(data.authority ?? "participant");
+        const authority = String(data.authority ?? "member");
         const participants = (data.participants as Participant[]) ?? [];
         const newParticipantId = String(data.participantId ?? "");
 
@@ -192,7 +192,7 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
           mode,
           participants: participants
             .filter((p) => p.id !== newParticipantId)
-            .map((p) => ({ name: p.name, authority: (p as any).authority ?? "participant" })),
+            .map((p) => ({ name: p.name, authority: (p as any).authority ?? "member" })),
           recentLines,
         } as JoinRoomResult;
       } catch (err) {
@@ -257,7 +257,7 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
         const res = await fetch(`${ds.serverUrl}/set-authority`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "observer" }),
+          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "guest" }),
         });
         if (!res.ok) return { success: false, error: await res.text() };
         return { success: true };
@@ -277,7 +277,7 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
         const res = await fetch(`${ds.serverUrl}/set-authority`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "participant" }),
+          body: JSON.stringify({ token: ds.sessionToken, participantId: p.id, authority: "member" }),
         });
         if (!res.ok) return { success: false, error: await res.text() };
         return { success: true };
