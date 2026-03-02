@@ -106,7 +106,7 @@ npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (261 passing)
+cd typescript && npm test          # run tests (266 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```
@@ -206,14 +206,16 @@ What's built, what works, what's planned. **Always update this section after imp
 
 #### Events
 
-- **Discriminated union** — 12 event types on the `type` field:
+- **Discriminated union** — 14 event types on the `type` field:
   - MESSAGE: `MessageSent`, `MessageEdited`, `MessageDeleted`, `ReactionAdded`, `ReactionRemoved`
-  - PRESENCE: `ParticipantJoined`, `ParticipantLeft`, `StatusChanged`
+  - PRESENCE: `ParticipantJoined`, `ParticipantLeft`, `ParticipantKicked`, `AuthorityChanged`, `StatusChanged`
   - ACTIVITY: `ToolUse`, `Activity`, `ContextCompacted`
   - MENTION: `Mentioned`
 - **`EVENT_ROLE` map** — single source of truth for semantic classification: `message`, `mention`, `ambient`, `internal`; engagement rules derive from role, not per-event-type switches
 - **`createEvent<T>(data)`** — factory that fills in UUID `id` and `timestamp`
 - **`ParticipantLeftEvent` snapshot** — carries a full `Participant` snapshot captured before removal so display names are always resolvable
+- **`ParticipantKickedEvent`** — emitted when an admin kicks a participant; carries `participant` snapshot and `kicked_by` admin name; ambient role so agents see it as context; the kicked participant's channel is silently disconnected (no `ParticipantLeft` emitted)
+- **`AuthorityChangedEvent`** — emitted when an admin changes a participant's authority (mute/unmute/promote); carries `participant` snapshot, `new_authority`, and `changed_by` admin name; ambient role; replaces the old `Activity` with `action: "authority_changed"`
 - **`MentionedEvent`** — delivered only to the mentioned participant's channel; `participant_id` is the recipient, not the sender; sender is in `message.sender_id`
 - **`ToolUseEvent`** — emitted twice per tool call: `status: "started" | "completed"` (typed union)
 - **`ActivityEvent`** — generic extensible event; current usage: `action: "mode_changed"` with `detail: { mode }`
@@ -344,6 +346,8 @@ What's built, what works, what's planned. **Always update this section after imp
   - Reactions: `"[14:23:01] [lobby] Alice reacted ❤️ to #3847"` — ref-based target
   - Joins: `"[14:23:01] [lobby] + Alice joined"`
   - Leaves: `"[14:23:15] [lobby] - Alice left"`
+  - Kicked: `"[14:23:01] [lobby] Alice was kicked"`
+  - Muted: `"[14:23:01] [lobby] Alice was muted"` / `"Alice was unmuted"` / `"Alice → admin"`
 - **Image-aware agent context** — image messages surfaced as native vision content blocks (`{ type: "image", url }`) in real-time events; tool outputs (`catch_up`, `search`) embed image URLs inline as `[[img:URL]]` text markers
 - **`contentPartsToString()`** — flattens `ContentPart[]` back to plain text (for trace logs)
 
@@ -382,7 +386,7 @@ What's built, what works, what's planned. **Always update this section after imp
 - `event-processor.test.ts` — 51 tests: room connections, dedup, mode management, catch-up building, content buffering, processing lock, RoomResolver, compaction, ref map
 - `engagement.test.ts` — 59 tests: 52 `classifyEvent()` covering all modes and edge cases + 7 `StoopsEngagement` class tests
 - `room.test.ts` — 39 tests: connect/disconnect, message sending, @mention detection, observer behavior, pagination, event broadcasting
-- `format-event.test.ts` — 29 tests: compact one-liner format, reply context, reactions, images, room labels, refs, null returns
+- `format-event.test.ts` — 34 tests: compact one-liner format, reply context, reactions, images, room labels, refs, null returns, kicked/authority-changed formatting
 - `tool-handlers.test.ts` — 18 tests: room resolution, message formatting, catch-up building, search by text, search by message (before/after, ref resolution, unknown anchor)
 - `multiplexer.test.ts` — 12 tests: channel add/remove, close, interleaving, labeled events
 - `ref-map.test.ts` — 8 tests: assignment idempotency, resolution, collision handling, clear/reset
@@ -440,8 +444,8 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
   - `GET /search?token=<session>&query&count&cursor` — keyword search
   - `POST /event` — `{ token, event }` — emit event (for ToolUse, Activity, ContextCompacted)
   - `POST /set-mode` — `{ token, participantId?, mode }` — self for own, admin for others
-  - `POST /set-authority` — `{ token, participantId, authority }` — admin only; changes participant's authority level (admin/participant/observer); prevents self-demotion; emits `authority_changed` ActivityEvent
-  - `POST /kick` — `{ token, participantId }` — admin only
+  - `POST /set-authority` — `{ token, participantId, authority }` — admin only; changes participant's authority level (admin/participant/observer); prevents self-demotion; emits `AuthorityChangedEvent` (ambient, visible to agents)
+  - `POST /kick` — `{ token, participantId }` — admin only; emits `ParticipantKickedEvent` before silent disconnect (no redundant `ParticipantLeft`)
   - `POST /share` — `{ token, authority? }` — generate share links at requested tier
   - `POST /disconnect` — `{ token }` — works for all participant types; legacy `participantId`/`agentId` fallback
 - **Two participant maps** — `participants` (ConnectedParticipant with authority + channel + sessionToken), `observers` (ConnectedObserver)
@@ -465,7 +469,7 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **System events** — slash command output rendered as `{ kind: "system" }` DisplayEvent
 - **SSE uses Authorization header** — `POST /events` with `Authorization: Bearer <sessionToken>`
 - **Messages use session token** — `POST /message` with `{ token: sessionToken, content }`
-- **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` handles MessageSent, ParticipantJoined/Left, Activity (mode_changed, authority_changed)
+- **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` handles MessageSent, ParticipantJoined/Left, ParticipantKicked, AuthorityChanged, Activity (mode_changed)
 - **Participant type tracking** — maintains `participantTypes` map from initial list + join/leave SSE events
 - **Share info output** — prints copyable commands for invite, Claude Code connect, and OpenCode connect before TUI renders
 - **Graceful disconnect** — `POST /disconnect` with session token on Ctrl+C/SIGINT/SIGTERM

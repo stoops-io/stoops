@@ -185,6 +185,20 @@ export function formatEvent(
       const name = event.participant?.name ?? "someone";
       return [{ type: "text", text: `${ts}${r}- ${name} left` }];
     }
+    case "ParticipantKicked": {
+      const name = event.participant?.name ?? "someone";
+      return [{ type: "text", text: `${ts}${r}${name} was kicked` }];
+    }
+    case "AuthorityChanged": {
+      const name = event.participant?.name ?? "someone";
+      if (event.new_authority === "observer") {
+        return [{ type: "text", text: `${ts}${r}${name} was muted` }];
+      }
+      if (event.new_authority === "participant") {
+        return [{ type: "text", text: `${ts}${r}${name} was unmuted` }];
+      }
+      return [{ type: "text", text: `${ts}${r}${name} → ${event.new_authority}` }];
+    }
     case "ContextCompacted":
       return null;
     default:

@@ -10,6 +10,8 @@ export {
   type ReactionRemovedEvent,
   type ParticipantJoinedEvent,
   type ParticipantLeftEvent,
+  type ParticipantKickedEvent,
+  type AuthorityChangedEvent,
   type StatusChangedEvent,
   type ToolUseEvent,
   type ActivityEvent,

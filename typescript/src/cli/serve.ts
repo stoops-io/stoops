@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { Room } from "../core/room.js";
 import { InMemoryStorage } from "../core/storage.js";
 import { randomRoomName, randomName } from "../core/names.js";
-import { createEvent, type ActivityEvent, type RoomEvent } from "../core/events.js";
+import { createEvent, type ActivityEvent, type AuthorityChangedEvent, type ParticipantKickedEvent, type RoomEvent } from "../core/events.js";
 import type { AuthorityLevel } from "../core/types.js";
 import type { Channel } from "../core/channel.js";
 import { formatTimestamp } from "../agent/prompts.js";
@@ -423,16 +423,18 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
         tokens.updateSessionAuthority(targetSession, newAuthority);
         room.setParticipantAuthority(targetId, newAuthority);
 
-        // Emit authority_changed activity event
-        const p = participants.get(sessionToken);
-        if (p) {
-          await p.channel.emit(createEvent<ActivityEvent>({
-            type: "Activity",
-            category: "ACTIVITY",
+        // Emit AuthorityChanged event
+        const adminP = participants.get(sessionToken);
+        const targetParticipant = room.listParticipants().find(p => p.id === targetId);
+        if (adminP && targetParticipant) {
+          await adminP.channel.emit(createEvent<AuthorityChangedEvent>({
+            type: "AuthorityChanged",
+            category: "PRESENCE",
             room_id: room.roomId,
             participant_id: targetId,
-            action: "authority_changed",
-            detail: { authority: newAuthority },
+            participant: targetParticipant,
+            new_authority: newAuthority,
+            changed_by: adminP.name,
           }));
         }
 
@@ -453,7 +455,21 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
         if (targetSession) {
           const target = participants.get(targetSession) ?? observers.get(targetSession);
           if (target) {
-            await target.channel.disconnect();
+            // Emit ParticipantKicked before disconnect so all participants see it
+            const adminP = participants.get(sessionToken);
+            const targetParticipant = room.listParticipants().find(p => p.id === targetId);
+            if (adminP && targetParticipant) {
+              await adminP.channel.emit(createEvent<ParticipantKickedEvent>({
+                type: "ParticipantKicked",
+                category: "PRESENCE",
+                room_id: room.roomId,
+                participant_id: targetId,
+                participant: targetParticipant,
+                kicked_by: adminP.name,
+              }));
+            }
+            // Silent disconnect — the kicked event replaces ParticipantLeft
+            await target.channel.disconnect(true);
             participants.delete(targetSession);
             observers.delete(targetSession);
             idToSession.delete(targetId);
