@@ -147,10 +147,11 @@ export async function setupAgentRuntime(options: AgentRuntimeOptions): Promise<A
         dataSource.setParticipants(participants);
         dataSource.setSelf(newParticipantId, agentName);
 
-        // Set selfId on first join
+        // Set global selfId on first join; always set per-room selfId
         if (joinResults.length === 0) {
           processor.participantId = newParticipantId;
         }
+        processor.setRoomParticipantId(roomId, newParticipantId);
 
         // Register in EventProcessor and SSE multiplexer
         const mode = processor.getModeForRoom(roomId) ?? "everyone";

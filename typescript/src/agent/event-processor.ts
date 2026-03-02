@@ -79,6 +79,8 @@ export class EventProcessor implements RoomResolver {
   private _log: RoomEvent[] = [];
   private _refMap = new RefMap();
   private _injectBuffer: ContentPart[][] = [];
+  /** Per-room participant IDs (for multi-server CLI agents where each server assigns a different ID). */
+  private _roomSelfIds = new Map<string, string>();
 
   constructor(
     participantId: string,
@@ -98,6 +100,16 @@ export class EventProcessor implements RoomResolver {
   set participantId(id: string) { this._participantId = id; }
   get participantName(): string { return this._participantName; }
   get currentContextRoomId(): string | null { return this._currentContextRoomId; }
+
+  /** Set a room-specific participant ID (for multi-server CLI agents). */
+  setRoomParticipantId(roomId: string, participantId: string): void {
+    this._roomSelfIds.set(roomId, participantId);
+  }
+
+  /** Get the effective selfId for a room — room-specific if set, otherwise the global one. */
+  getSelfIdForRoom(roomId: string): string {
+    return this._roomSelfIds.get(roomId) ?? this._participantId;
+  }
 
   // ── Ref map (consumer calls these for MCP tools) ────────────────────────────
 
@@ -254,6 +266,7 @@ export class EventProcessor implements RoomResolver {
     this._registry.remove(roomId);
     this._engagement.onRoomDisconnected?.(roomId);
     this._buffer.delete(roomId);
+    this._roomSelfIds.delete(roomId);
   }
 
   async disconnectRoom(roomId: string): Promise<void> {
@@ -265,6 +278,7 @@ export class EventProcessor implements RoomResolver {
     this._registry.remove(roomId);
     this._engagement.onRoomDisconnected?.(roomId);
     this._buffer.delete(roomId);
+    this._roomSelfIds.delete(roomId);
   }
 
   // ── Mode management ─────────────────────────────────────────────────────────
@@ -344,6 +358,7 @@ export class EventProcessor implements RoomResolver {
     this._buffer.clear();
     this._tracker.clearAll();
     this._refMap.clear();
+    this._roomSelfIds.clear();
     this._deliver = null;
   }
 
@@ -414,7 +429,8 @@ export class EventProcessor implements RoomResolver {
     const sender = conn?.dataSource.listParticipants().find((p) => p.id === senderLookupId);
     const senderType: ParticipantType = sender?.type ?? "human";
 
-    const disposition: EventDisposition = this._engagement.classify(event, roomId, this._participantId, senderType, senderLookupId);
+    const selfId = this.getSelfIdForRoom(roomId);
+    const disposition: EventDisposition = this._engagement.classify(event, roomId, selfId, senderType, senderLookupId);
 
     if (disposition === "drop") return;
 
@@ -457,7 +473,8 @@ export class EventProcessor implements RoomResolver {
             : qe.event.participant_id;
         const qSender = qConn?.dataSource.listParticipants().find((p) => p.id === qSenderLookupId);
         const qSenderType: ParticipantType = qSender?.type ?? "human";
-        const qDisposition = this._engagement.classify(qe.event, qe.roomId, this._participantId, qSenderType, qSenderLookupId);
+        const qSelfId = this.getSelfIdForRoom(qe.roomId);
+        const qDisposition = this._engagement.classify(qe.event, qe.roomId, qSelfId, qSenderType, qSenderLookupId);
 
         if (qDisposition === "drop") continue;
 

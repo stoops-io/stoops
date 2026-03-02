@@ -31,6 +31,7 @@ import {
   textResult,
 } from "../tool-handlers.js";
 import { MODE_DESCRIPTIONS } from "../prompts.js";
+import { isValidMode } from "../engagement.js";
 import { EventEmitterAsyncResource } from "node:events"
 
 export interface JoinRoomResult {
@@ -201,6 +202,9 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     async ({ room, mode }: { room: string; mode: string }) => {
       if (!opts.onSetMode) return textResult("Mode changes not supported.");
+      if (!isValidMode(mode)) {
+        return textResult(`Invalid mode "${mode}". Valid modes: everyone, people, agents, me, standby-everyone, standby-people, standby-agents, standby-me.`);
+      }
       const result = await opts.onSetMode(room, mode);
       return result.success
         ? textResult(`Mode set to ${mode} for [${room}].`)
@@ -260,6 +264,9 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
       { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       async ({ room, participant, mode }: { room: string; participant: string; mode: string }) => {
         if (!opts.onAdminSetModeFor) return textResult("Admin mode changes not supported.");
+        if (!isValidMode(mode)) {
+          return textResult(`Invalid mode "${mode}". Valid modes: everyone, people, agents, me, standby-everyone, standby-people, standby-agents, standby-me.`);
+        }
         const result = await opts.onAdminSetModeFor(room, participant, mode);
         return result.success
           ? textResult(`Set ${participant}'s mode to ${mode} in [${room}].`)

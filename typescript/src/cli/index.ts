@@ -102,9 +102,14 @@ async function main(): Promise<void> {
   // ── stoops serve ───────────────────────────────────────────────────────
   if (args[0] === "serve") {
     const portStr = getFlag("port");
+    const port = portStr ? parseInt(portStr, 10) : undefined;
+    if (port !== undefined && (isNaN(port) || port < 0 || port > 65535)) {
+      console.error(`Invalid port: ${portStr}`);
+      process.exit(1);
+    }
     await serve({
       room: getFlag("room"),
-      port: portStr ? parseInt(portStr, 10) : undefined,
+      port,
       share: args.includes("--share"),
       headless: args.includes("--headless"),
     });
@@ -114,9 +119,14 @@ async function main(): Promise<void> {
   // ── stoops (bare) — host + join ────────────────────────────────────────
   if (args.length === 0 || args[0]?.startsWith("--")) {
     const portStr = getFlag("port");
+    const port = portStr ? parseInt(portStr, 10) : undefined;
+    if (port !== undefined && (isNaN(port) || port < 0 || port > 65535)) {
+      console.error(`Invalid port: ${portStr}`);
+      process.exit(1);
+    }
     const result = await serve({
       room: getFlag("room"),
-      port: portStr ? parseInt(portStr, 10) : undefined,
+      port,
       share: args.includes("--share"),
       quiet: true,
     });
