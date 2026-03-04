@@ -75,10 +75,10 @@ npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   
 ```
 
 **Authority model:**
-- Three tiers: `admin` > `participant` > `observer`
+- Three tiers: `admin` > `member` > `guest`
 - Share links encode authority — anyone with the link joins at that tier
 - Admins can kick, change others' modes, generate share links at any tier
-- Participants can send messages, change own mode, generate participant/observer links
+- Members can send messages, change own mode, generate member/guest links
 - Observers are read-only
 
 **MCP tools (agent runtime):**
@@ -91,22 +91,22 @@ npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   
 - `stoops__leave_room(room)` — leave a room
 - `stoops__admin__set_mode_for(room, participant, mode)` — admin only
 - `stoops__admin__kick(room, participant)` — admin only
-- `stoops__admin__mute(room, participant)` — admin only, demote to observer
-- `stoops__admin__unmute(room, participant)` — admin only, restore to participant
+- `stoops__admin__mute(room, participant)` — admin only, demote to guest
+- `stoops__admin__unmute(room, participant)` — admin only, restore to member
 
 **TUI slash commands:**
 - `/who` — list participants with types and authority
 - `/leave` — disconnect
 - `/kick <name>` — admin: remove a participant
-- `/mute <name>` — admin: demote to observer (read-only)
-- `/unmute <name>` — admin: restore to participant
+- `/mute <name>` — admin: demote to guest (read-only)
+- `/unmute <name>` — admin: restore to member
 - `/setmode <name> <mode>` — admin: set specific mode
-- `/share [--as admin|participant|observer]` — generate share links
+- `/share [--as admin|member|guest]` — generate share links
 
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (261 passing)
+cd typescript && npm test          # run tests (266 passing)
 cd typescript && npm run build     # build with tsup
 cd typescript && npm run typecheck # tsc --noEmit
 ```
@@ -115,7 +115,7 @@ cd typescript && npm run typecheck # tsc --noEmit
 
 All three CLI commands support `--headless` for scriptable, terminal-free operation:
 
-- `stoops serve --headless` — emits a single JSON line `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` then runs silently. No banner, no logs.
+- `stoops serve --headless` — emits a single JSON line `{ serverUrl, publicUrl, roomName, adminToken, memberToken }` then runs silently. No banner, no logs.
 - `stoops join <url> --headless` — skips the TUI; streams raw `RoomEvent` JSON lines to stdout, reads messages from stdin (one line per send).
 - `stoops run claude --headless` — skips tmux; delivers formatted events as plain text to stdout. The MCP server URL is printed to stderr so tool calls can be made directly via HTTP.
 
@@ -126,10 +126,10 @@ Together these make it possible to drive a full room scenario from a script: sta
 - **Room** — shared real-time space. Participants connect, receive events, send messages.
 - **Channel** — per-participant connection with event filtering by category.
 - **Event** — discriminated union of 12 typed events. Classified by `EVENT_ROLE` into message/mention/ambient/internal.
-- **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 8 built-in modes across two axes: who (me/people/agents/everyone) × how (messages/mentions).
+- **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 6 active modes across two axes: who (people/agents/everyone) × how (messages/mentions). 2 additional modes (`me`, `standby-me`) exist in core for the app path but are disabled in the CLI runtime (no `personParticipantId`).
 - **EventProcessor** — core event loop. Owns the multiplexer, engagement strategy, content buffer, event queue, ref map, room connections. Delivery is pluggable — `run(deliver)` takes a callback. One processor = one agent = N rooms.
 - **Consumer** — platform-specific delivery. `ILLMSession` interface with Claude and LangGraph implementations. The CLI path uses tmux injection (Claude Code) or HTTP API (OpenCode). Consumers own their own lifecycle (session creation, MCP servers, compaction, stats).
-- **Authority** — three tiers: `admin` > `participant` > `observer`. Set on join via share token. Controls what actions are permitted (MCP tools, slash commands). Orthogonal to engagement.
+- **Authority** — three tiers: `admin` > `member` > `guest`. Set on join via share token. Controls what actions are permitted (MCP tools, slash commands). Orthogonal to engagement.
 - **MCP tools** — app path: `catch_up`, `send_message`, `search_by_text`, `search_by_message` (one MCP server per consumer). CLI path: runtime MCP server with `stoops__*` tools routed to remote servers via HTTP.
 - **RoomDataSource** — abstraction over room data access. `LocalRoomDataSource` wraps Room+Channel for in-process. `RemoteRoomDataSource` wraps HTTP calls to a stoop server.
 - **RefMap** — bidirectional 4-digit decimal refs ↔ message UUIDs. LCG generator for non-sequential refs.
@@ -206,14 +206,16 @@ What's built, what works, what's planned. **Always update this section after imp
 
 #### Events
 
-- **Discriminated union** — 12 event types on the `type` field:
+- **Discriminated union** — 14 event types on the `type` field:
   - MESSAGE: `MessageSent`, `MessageEdited`, `MessageDeleted`, `ReactionAdded`, `ReactionRemoved`
-  - PRESENCE: `ParticipantJoined`, `ParticipantLeft`, `StatusChanged`
+  - PRESENCE: `ParticipantJoined`, `ParticipantLeft`, `ParticipantKicked`, `AuthorityChanged`, `StatusChanged`
   - ACTIVITY: `ToolUse`, `Activity`, `ContextCompacted`
   - MENTION: `Mentioned`
 - **`EVENT_ROLE` map** — single source of truth for semantic classification: `message`, `mention`, `ambient`, `internal`; engagement rules derive from role, not per-event-type switches
 - **`createEvent<T>(data)`** — factory that fills in UUID `id` and `timestamp`
 - **`ParticipantLeftEvent` snapshot** — carries a full `Participant` snapshot captured before removal so display names are always resolvable
+- **`ParticipantKickedEvent`** — emitted when an admin kicks a participant; carries `participant` snapshot and `kicked_by` admin name; ambient role so agents see it as context; the kicked participant's channel is silently disconnected (no `ParticipantLeft` emitted)
+- **`AuthorityChangedEvent`** — emitted when an admin changes a participant's authority (mute/unmute/promote); carries `participant` snapshot, `new_authority`, and `changed_by` admin name; ambient role; replaces the old `Activity` with `action: "authority_changed"`
 - **`MentionedEvent`** — delivered only to the mentioned participant's channel; `participant_id` is the recipient, not the sender; sender is in `message.sender_id`
 - **`ToolUseEvent`** — emitted twice per tool call: `status: "started" | "completed"` (typed union)
 - **`ActivityEvent`** — generic extensible event; current usage: `action: "mode_changed"` with `detail: { mode }`
@@ -229,7 +231,7 @@ What's built, what works, what's planned. **Always update this section after imp
 #### Types
 
 - **`Message`** — Zod-validated schema: id, room_id, sender_id, sender_name, content, reply_to_id, image_url, image_mime_type, image_size_bytes, timestamp
-- **`AuthorityLevel`** — `"admin" | "participant" | "observer"` — determines what a participant can do
+- **`AuthorityLevel`** — `"admin" | "member" | "guest"` — determines what a participant can do
 - **`Participant`** — id, name, status, type (`"human"` | `"agent"`), optional `identifier`, optional `authority`
 - **`PaginatedResult<T>`** — items, next_cursor, has_more
 
@@ -240,16 +242,15 @@ What's built, what works, what's planned. **Always update this section after imp
 #### Engagement
 
 - **`EngagementStrategy` interface** — `classify(event, roomId, selfId, senderType, senderId) → "trigger" | "content" | "drop"`; optional `getMode?()`, `setMode?()`, `onRoomDisconnected?()` for strategies with per-room state
-- **`StoopsEngagement` class** — built-in strategy implementing the 8-mode system; maintains per-room mode state internally
-- **8 engagement modes** — 4 active + 4 standby:
+- **`StoopsEngagement` class** — built-in strategy implementing the 6+2 mode system; maintains per-room mode state internally
+- **6 engagement modes** — 3 active + 3 standby (available in CLI):
   - `everyone` — any message triggers (human + agent)
   - `people` — human messages trigger; agent messages buffered as content
   - `agents` — agent messages trigger; human messages buffered as content
-  - `me` — only the agent's person's messages trigger
   - `standby-everyone` — any @mention triggers; everything else dropped
   - `standby-people` — human @mentions only
   - `standby-agents` — agent @mentions only
-  - `standby-me` — only person's @mention triggers
+- **2 future modes** — `me` and `standby-me` exist in core but are disabled in the CLI runtime; they require `personParticipantId` which the CLI path has no way to set (the agent doesn't know who its "person" is); only usable via the app path (ClaudeSession, LangGraphSession) where the consuming app provides the owner's ID
 - **Classification rules** (in order):
   1. Internal events → always drop
   2. Self-sent events → drop (except mentions — standby agents must wake on @mention)
@@ -259,7 +260,7 @@ What's built, what works, what's planned. **Always update this section after imp
   6. Active: message from non-matching sender → content
   7. Active: ambient event → content
 - **`classifyEvent()`** — standalone pure function with same logic as `StoopsEngagement`; useful for one-off classification or testing
-- **Person concept** — `personParticipantId` identifies the agent's owner; their messages carry more weight in `people` mode and exclusively trigger in `me` mode
+- **Person concept** — `personParticipantId` identifies the agent's owner; their messages carry more weight in `people` mode and exclusively trigger in `me` mode; only available in app path (not CLI)
 
 #### EventProcessor
 
@@ -344,6 +345,8 @@ What's built, what works, what's planned. **Always update this section after imp
   - Reactions: `"[14:23:01] [lobby] Alice reacted ❤️ to #3847"` — ref-based target
   - Joins: `"[14:23:01] [lobby] + Alice joined"`
   - Leaves: `"[14:23:15] [lobby] - Alice left"`
+  - Kicked: `"[14:23:01] [lobby] Alice was kicked"`
+  - Muted: `"[14:23:01] [lobby] Alice was muted"` / `"Alice was unmuted"` / `"Alice → admin"`
 - **Image-aware agent context** — image messages surfaced as native vision content blocks (`{ type: "image", url }`) in real-time events; tool outputs (`catch_up`, `search`) embed image URLs inline as `[[img:URL]]` text markers
 - **`contentPartsToString()`** — flattens `ContentPart[]` back to plain text (for trace logs)
 
@@ -382,14 +385,14 @@ What's built, what works, what's planned. **Always update this section after imp
 - `event-processor.test.ts` — 51 tests: room connections, dedup, mode management, catch-up building, content buffering, processing lock, RoomResolver, compaction, ref map
 - `engagement.test.ts` — 59 tests: 52 `classifyEvent()` covering all modes and edge cases + 7 `StoopsEngagement` class tests
 - `room.test.ts` — 39 tests: connect/disconnect, message sending, @mention detection, observer behavior, pagination, event broadcasting
-- `format-event.test.ts` — 29 tests: compact one-liner format, reply context, reactions, images, room labels, refs, null returns
+- `format-event.test.ts` — 34 tests: compact one-liner format, reply context, reactions, images, room labels, refs, null returns, kicked/authority-changed formatting
 - `tool-handlers.test.ts` — 18 tests: room resolution, message formatting, catch-up building, search by text, search by message (before/after, ref resolution, unknown anchor)
 - `multiplexer.test.ts` — 12 tests: channel add/remove, close, interleaving, labeled events
 - `ref-map.test.ts` — 8 tests: assignment idempotency, resolution, collision handling, clear/reset
 - `session-langgraph.test.ts` — 4 tests (1 skipped): module exports, session creation, MCP server
 - `session-claude.test.ts` — 4 tests: module exports, session creation, temp directory, SDK loading
 - `tmux-bridge.test.ts` — 20 tests: state detection heuristics for idle, typing, dialog (single-select, multi-select, plan approval, review/submit), permission, streaming, unknown, and priority ordering
-- `integration.test.ts` — 13 tests: full CLI stack via `--headless` mode — server lifecycle, join/leave, observer authority, messaging (HTTP + SSE), authority enforcement, kick permissions, mute/unmute (authority change), multi-participant, share link generation, @mention delivery, self-demotion prevention
+- `integration.test.ts` — 13 tests: full CLI stack via `--headless` mode — server lifecycle, join/leave, guest authority, messaging (HTTP + SSE), authority enforcement, kick permissions, mute/unmute (authority change), multi-participant, share link generation, @mention delivery, self-demotion prevention
 
 ---
 
@@ -426,13 +429,13 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 
 - **Dumb room server** — one room, one HTTP API, SSE broadcasting, authority enforcement; no EventProcessor, no tmux, no agent lifecycle
 - **Token-based auth** — all endpoints validate session tokens via `getSession()` helper; share tokens validated on join
-- **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` after server is ready
+- **Returns `ServeResult`** — `{ serverUrl, publicUrl, roomName, adminToken, memberToken }` after server is ready
 - **Boot** — generates admin + participant share tokens; prints URLs with `stoops join`, `stoops run claude` (with manual join instruction), and `stoops run opencode --join` commands
-- **`--headless` flag** — suppresses all output; emits one JSON line `{ serverUrl, publicUrl, roomName, adminToken, participantToken }` for scripted use
+- **`--headless` flag** — suppresses all output; emits one JSON line `{ serverUrl, publicUrl, roomName, adminToken, memberToken }` for scripted use
 - **HTTP API** on configurable port (default 7890):
-  - `POST /join` — accepts `{ token, name?, type? }`; validates share token → determines authority; creates participant (admin/participant) or observer; returns `{ sessionToken, participantId, roomName, roomId, participants, authority }`
+  - `POST /join` — accepts `{ token, name?, type? }`; validates share token → determines authority; creates participant (admin/member) or guest; returns `{ sessionToken, participantId, roomName, roomId, participants, authority }`
   - `POST /events` — SSE stream; auth via `Authorization: Bearer <token>` header; sends last 50 events as history then streams live; enriches `MessageSent` with `_replyToName`; POST required for Cloudflare tunnel real-time flushing
-  - `POST /message` — `{ token, content, replyTo? }`; 403 if observer
+  - `POST /message` — `{ token, content, replyTo? }`; 403 if guest
   - `GET /participants?token=<session>` — participant list with authority
   - `GET /message/:id?token=<session>` — single message lookup
   - `GET /messages?token=<session>&count&cursor` — paginated messages
@@ -440,11 +443,11 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
   - `GET /search?token=<session>&query&count&cursor` — keyword search
   - `POST /event` — `{ token, event }` — emit event (for ToolUse, Activity, ContextCompacted)
   - `POST /set-mode` — `{ token, participantId?, mode }` — self for own, admin for others
-  - `POST /set-authority` — `{ token, participantId, authority }` — admin only; changes participant's authority level (admin/participant/observer); prevents self-demotion; emits `authority_changed` ActivityEvent
-  - `POST /kick` — `{ token, participantId }` — admin only
+  - `POST /set-authority` — `{ token, participantId, authority }` — admin only; changes participant's authority level (admin/member/guest); prevents self-demotion; emits `AuthorityChangedEvent` (ambient, visible to agents)
+  - `POST /kick` — `{ token, participantId }` — admin only; emits `ParticipantKickedEvent` before silent disconnect (no redundant `ParticipantLeft`)
   - `POST /share` — `{ token, authority? }` — generate share links at requested tier
   - `POST /disconnect` — `{ token }` — works for all participant types; legacy `participantId`/`agentId` fallback
-- **Two participant maps** — `participants` (ConnectedParticipant with authority + channel + sessionToken), `observers` (ConnectedObserver)
+- **Two participant maps** — `participants` (ConnectedParticipant with authority + channel + sessionToken), `guests` (ConnectedGuest)
 - **Reverse lookup** — `idToSession` map for participant ID → session token lookup
 - **Graceful shutdown** — kills tunnel, closes SSE, disconnects all participants
 
@@ -453,19 +456,19 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **TUI client** — connects to any stoops server over HTTP with token-based auth
 - **Token extraction** — `extractToken()` pulls share token from URL; stripped to get clean server URL
 - **Flow**: extract token → `POST /join` with token → get sessionToken + authority → start TUI → connect SSE → stream events → cleanup
-- **Authority-aware** — observer authority → `readOnly` mode in TUI
+- **Authority-aware** — guest authority → `readOnly` mode in TUI
 - **Slash commands** — `/` prefix in `onSend` is intercepted and dispatched to command handlers:
   - `/who` — `GET /participants`, renders participant table with type and authority
   - `/leave` — disconnects and exits
   - `/kick <name>` — admin only; looks up participant by name, `POST /kick`
-  - `/mute <name>` — admin only; demotes to observer via `POST /set-authority`
-  - `/unmute <name>` — admin only; restores to participant via `POST /set-authority`
+  - `/mute <name>` — admin only; demotes to guest via `POST /set-authority`
+  - `/unmute <name>` — admin only; restores to member via `POST /set-authority`
   - `/setmode <name> <mode>` — admin only; sets specific mode via `POST /set-mode`
-  - `/share [--as tier]` — generates share links via `POST /share`; observers blocked
+  - `/share [--as tier]` — generates share links via `POST /share`; guests blocked
 - **System events** — slash command output rendered as `{ kind: "system" }` DisplayEvent
 - **SSE uses Authorization header** — `POST /events` with `Authorization: Bearer <sessionToken>`
 - **Messages use session token** — `POST /message` with `{ token: sessionToken, content }`
-- **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` handles MessageSent, ParticipantJoined/Left, Activity (mode_changed, authority_changed)
+- **`RoomEvent` → `DisplayEvent` conversion** — `toDisplayEvent()` handles MessageSent, ParticipantJoined/Left, ParticipantKicked, AuthorityChanged, Activity (mode_changed)
 - **Participant type tracking** — maintains `participantTypes` map from initial list + join/leave SSE events
 - **Share info output** — prints copyable commands for invite, Claude Code connect, and OpenCode connect before TUI renders
 - **Graceful disconnect** — `POST /disconnect` with session token on Ctrl+C/SIGINT/SIGTERM
@@ -592,4 +595,4 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **~~tmux input collision~~** — resolved: TmuxBridge detects TUI state via `capture-pane` and applies state-appropriate injection (Ctrl+U/Ctrl+Y for user typing, queue for dialogs/streaming).
 - **~~Claude Code readiness~~** — resolved: TmuxBridge.waitForReady() polls `capture-pane` for the `❯` prompt instead of using a hardcoded delay.
 - **Images in tool results** — `[[img:URL]]` text markers still used in MCP tool output; native vision blocks only work in real-time event injection, not in catch_up/search results.
-- **Engagement mode count** — 8 modes internally, but the v3 UX design exposes 4 active modes + standby as an orthogonal toggle. Should the internal model simplify to match, or keep 8 for power users?
+- **Engagement mode count** — 8 modes internally (6 in CLI, 8 in app path). The `me`/`standby-me` modes need a way to identify the agent's person in the CLI path — possible approaches: `--person <name>` flag, or auto-detect the room host.

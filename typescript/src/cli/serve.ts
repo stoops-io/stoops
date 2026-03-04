@@ -14,7 +14,7 @@ import { createRequire } from "node:module";
 import { Room } from "../core/room.js";
 import { InMemoryStorage } from "../core/storage.js";
 import { randomRoomName, randomName } from "../core/names.js";
-import { createEvent, type ActivityEvent, type RoomEvent } from "../core/events.js";
+import { createEvent, type ActivityEvent, type AuthorityChangedEvent, type ParticipantKickedEvent, type RoomEvent } from "../core/events.js";
 import type { AuthorityLevel } from "../core/types.js";
 import type { Channel } from "../core/channel.js";
 import { formatTimestamp } from "../agent/prompts.js";
@@ -30,9 +30,9 @@ interface ConnectedParticipant {
   sessionToken: string;
 }
 
-interface ConnectedObserver {
+interface ConnectedGuest {
   id: string;
-  authority: "observer";
+  authority: "guest";
   channel: Channel;
   sessionToken: string;
 }
@@ -51,7 +51,7 @@ export interface ServeResult {
   publicUrl: string;
   roomName: string;
   adminToken: string;
-  participantToken: string;
+  memberToken: string;
 }
 
 // ── SSE helper ───────────────────────────────────────────────────────────────
@@ -87,9 +87,9 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   // Auth
   const tokens = new TokenManager();
 
-  // Connected participants and observers (by session token for lookup)
+  // Connected participants and guests (by session token for lookup)
   const participants = new Map<string, ConnectedParticipant>();
-  const observers = new Map<string, ConnectedObserver>();
+  const guests = new Map<string, ConnectedGuest>();
   // Reverse lookup: participantId → sessionToken
   const idToSession = new Map<string, string>();
 
@@ -110,8 +110,8 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     if (!token) return null;
     const p = participants.get(token);
     if (p) return { ...p, kind: "participant" as const };
-    const o = observers.get(token);
-    if (o) return { ...o, kind: "observer" as const };
+    const g = guests.get(token);
+    if (g) return { ...g, kind: "guest" as const };
     return null;
   }
 
@@ -196,7 +196,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
           id: p.id,
           name: p.name,
           type: p.type,
-          authority: p.authority ?? "participant",
+          authority: p.authority ?? "member",
         }));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ participants: list }));
@@ -269,30 +269,30 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
           if (!tokenAuthority) return jsonError(res, 403, "Invalid share token");
           authority = tokenAuthority;
         } else if (legacyType === "guest") {
-          authority = "observer";
+          authority = "guest";
         } else if (legacyType === "human") {
-          authority = "participant";
+          authority = "member";
         } else {
-          // Default: agent joins as participant
-          authority = "participant";
+          // Default: agent joins as member
+          authority = "member";
         }
 
         const participantType = String(body.type ?? "human") as "human" | "agent";
         const name = String(body.name ?? randomName());
 
-        if (authority === "observer") {
+        if (authority === "guest") {
           const id = `obs_${randomUUID().slice(0, 8)}`;
           const channel = room.observe();
-          const sessionToken = tokens.createSessionToken(id, "observer");
+          const sessionToken = tokens.createSessionToken(id, "guest");
 
-          observers.set(sessionToken, { id, authority: "observer", channel, sessionToken });
+          guests.set(sessionToken, { id, authority: "guest", channel, sessionToken });
           idToSession.set(id, sessionToken);
 
           const participantList = room.listParticipants().map((p) => ({
             id: p.id,
             name: p.name,
             type: p.type,
-            authority: p.authority ?? "participant",
+            authority: p.authority ?? "member",
           }));
 
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -302,7 +302,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
             roomName,
             roomId: room.roomId,
             participants: participantList,
-            authority: "observer",
+            authority: "guest",
           }));
           return;
         }
@@ -319,7 +319,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
           id: p.id,
           name: p.name,
           type: p.type,
-          authority: p.authority ?? "participant",
+          authority: p.authority ?? "member",
         }));
 
         log(`${name} joined (${authority})`);
@@ -344,7 +344,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
       // ── POST /message ───────────────────────────────────────────────────
       if (url.pathname === "/message") {
         if (!session) return jsonError(res, 401, "Invalid session token");
-        if (session.authority === "observer") return jsonError(res, 403, "Observers cannot send messages");
+        if (session.authority === "guest") return jsonError(res, 403, "Guests cannot send messages");
         const content = String(body.content ?? "");
         const replyTo = body.replyTo ? String(body.replyTo) : undefined;
         if (!content) return jsonError(res, 400, "Empty message");
@@ -360,7 +360,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
       // ── POST /event ─────────────────────────────────────────────────────
       if (url.pathname === "/event") {
         if (!session) return jsonError(res, 401, "Invalid session token");
-        if (session.authority === "observer") return jsonError(res, 403, "Observers cannot emit events");
+        if (session.authority === "guest") return jsonError(res, 403, "Guests cannot emit events");
         const event = body.event as RoomEvent | undefined;
         if (!event) return jsonError(res, 400, "Missing event");
 
@@ -408,8 +408,8 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
         const targetId = String(body.participantId ?? "");
         const newAuthority = String(body.authority ?? "") as AuthorityLevel;
         if (!targetId) return jsonError(res, 400, "Missing participantId");
-        if (!["admin", "participant", "observer"].includes(newAuthority)) {
-          return jsonError(res, 400, "Invalid authority. Must be admin, participant, or observer.");
+        if (!["admin", "member", "guest"].includes(newAuthority)) {
+          return jsonError(res, 400, "Invalid authority. Must be admin, member, or guest.");
         }
         if (targetId === session.id) return jsonError(res, 400, "Cannot change own authority");
 
@@ -423,16 +423,18 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
         tokens.updateSessionAuthority(targetSession, newAuthority);
         room.setParticipantAuthority(targetId, newAuthority);
 
-        // Emit authority_changed activity event
-        const p = participants.get(sessionToken);
-        if (p) {
-          await p.channel.emit(createEvent<ActivityEvent>({
-            type: "Activity",
-            category: "ACTIVITY",
+        // Emit AuthorityChanged event
+        const adminP = participants.get(sessionToken);
+        const targetParticipant = room.listParticipants().find(p => p.id === targetId);
+        if (adminP && targetParticipant) {
+          await adminP.channel.emit(createEvent<AuthorityChangedEvent>({
+            type: "AuthorityChanged",
+            category: "PRESENCE",
             room_id: room.roomId,
             participant_id: targetId,
-            action: "authority_changed",
-            detail: { authority: newAuthority },
+            participant: targetParticipant,
+            new_authority: newAuthority,
+            changed_by: adminP.name,
           }));
         }
 
@@ -451,11 +453,25 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
         // Find and disconnect the target
         const targetSession = idToSession.get(targetId);
         if (targetSession) {
-          const target = participants.get(targetSession) ?? observers.get(targetSession);
+          const target = participants.get(targetSession) ?? guests.get(targetSession);
           if (target) {
-            await target.channel.disconnect();
+            // Emit ParticipantKicked before disconnect so all participants see it
+            const adminP = participants.get(sessionToken);
+            const targetParticipant = room.listParticipants().find(p => p.id === targetId);
+            if (adminP && targetParticipant) {
+              await adminP.channel.emit(createEvent<ParticipantKickedEvent>({
+                type: "ParticipantKicked",
+                category: "PRESENCE",
+                room_id: room.roomId,
+                participant_id: targetId,
+                participant: targetParticipant,
+                kicked_by: adminP.name,
+              }));
+            }
+            // Silent disconnect — the kicked event replaces ParticipantLeft
+            await target.channel.disconnect(true);
             participants.delete(targetSession);
-            observers.delete(targetSession);
+            guests.delete(targetSession);
             idToSession.delete(targetId);
             tokens.revokeSessionToken(targetSession);
             // Close SSE connection
@@ -475,7 +491,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
       // ── POST /share ─────────────────────────────────────────────────────
       if (url.pathname === "/share") {
         if (!session) return jsonError(res, 401, "Invalid session token");
-        if (session.authority === "observer") return jsonError(res, 403, "Observers cannot create share links");
+        if (session.authority === "guest") return jsonError(res, 403, "Guests cannot create share links");
 
         const targetAuthority = (body.authority as AuthorityLevel) ?? undefined;
 
@@ -488,7 +504,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
           links[targetAuthority] = buildShareUrl(publicUrl, token);
         } else {
           // Generate all links the caller can create
-          const tiers: AuthorityLevel[] = ["admin", "participant", "observer"];
+          const tiers: AuthorityLevel[] = ["admin", "member", "guest"];
           for (const tier of tiers) {
             const token = tokens.generateShareToken(session.authority, tier);
             if (token) links[tier] = buildShareUrl(publicUrl, token);
@@ -523,14 +539,14 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
             log(`${p.name} disconnected`);
           }
 
-          const o = observers.get(targetToken);
-          if (o) {
-            await o.channel.disconnect();
-            observers.delete(targetToken);
-            idToSession.delete(o.id);
+          const g = guests.get(targetToken);
+          if (g) {
+            await g.channel.disconnect();
+            guests.delete(targetToken);
+            idToSession.delete(g.id);
             tokens.revokeSessionToken(targetToken);
-            const sse = sseConnections.get(o.id);
-            if (sse) { sse.end(); sseConnections.delete(o.id); }
+            const sse = sseConnections.get(g.id);
+            if (sse) { sse.end(); sseConnections.delete(g.id); }
           }
         }
 
@@ -567,10 +583,10 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
 
   // Generate share tokens on boot
   const adminToken = tokens.generateShareToken("admin", "admin")!;
-  const participantToken = tokens.generateShareToken("admin", "participant")!;
+  const memberToken = tokens.generateShareToken("admin", "member")!;
 
   if (options.headless) {
-    process.stdout.write(JSON.stringify({ serverUrl, publicUrl, roomName, adminToken, participantToken }) + "\n");
+    process.stdout.write(JSON.stringify({ serverUrl, publicUrl, roomName, adminToken, memberToken }) + "\n");
   } else if (!options.quiet) {
     let version = process.env.npm_package_version ?? "";
     if (!version) {
@@ -583,7 +599,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
       }
     }
     const adminUrl = buildShareUrl(publicUrl, adminToken);
-    const joinUrl = buildShareUrl(publicUrl, participantToken);
+    const joinUrl = buildShareUrl(publicUrl, memberToken);
 
     console.log(`
   stoops v${version}
@@ -604,7 +620,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     if (tunnelProcess) { tunnelProcess.kill(); tunnelProcess = null; }
     for (const [id, sse] of sseConnections) { sse.end(); sseConnections.delete(id); }
     for (const p of participants.values()) { await p.channel.disconnect().catch(() => {}); }
-    for (const o of observers.values()) { await o.channel.disconnect().catch(() => {}); }
+    for (const g of guests.values()) { await g.channel.disconnect().catch(() => {}); }
     await new Promise<void>((resolve, reject) => {
       httpServer.close((err) => (err ? reject(err) : resolve()));
     });
@@ -614,7 +630,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  return { serverUrl, publicUrl, roomName, adminToken, participantToken };
+  return { serverUrl, publicUrl, roomName, adminToken, memberToken };
 }
 
 // ── Server log ────────────────────────────────────────────────────────────────

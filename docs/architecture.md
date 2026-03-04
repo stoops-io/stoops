@@ -90,7 +90,7 @@ One process. One room. HTTP API on a configurable port (default 7890).
 |--------|------|---------|
 | `POST` | `/join` | Validate share token → create participant → return session token, room metadata, participant list, authority |
 | `GET` | `/events?token=` | SSE stream. Sends last 50 events as history, then streams live. Enriches MessageSent with `_replyToName` |
-| `POST` | `/message` | Send a message (403 if observer) |
+| `POST` | `/message` | Send a message (403 if guest) |
 | `GET` | `/participants?token=` | List participants with types and authority |
 | `GET` | `/message/:id?token=` | Single message lookup by ID |
 | `GET` | `/messages?token=&count&cursor` | Paginated message history (newest-first) |

@@ -14,7 +14,7 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
-import type { Message, Participant } from "./types.js";
+import type { AuthorityLevel, Message, Participant } from "./types.js";
 
 // ── Base ─────────────────────────────────────────────────────────────────────
 
@@ -122,6 +122,45 @@ export interface StatusChangedEvent extends BaseRoomEvent {
   status: "online" | "offline" | "away";
 }
 
+/**
+ * A participant was kicked from the room by an admin.
+ *
+ * Emitted before the channel disconnect so all participants see it.
+ * The subsequent `ParticipantLeft` event is suppressed (silent disconnect).
+ */
+export interface ParticipantKickedEvent extends BaseRoomEvent {
+  type: "ParticipantKicked";
+  category: "PRESENCE";
+  room_id: string;
+  /** The kicked participant. */
+  participant_id: string;
+  timestamp: Date;
+  /** Full participant snapshot at kick time. */
+  participant: Participant;
+  /** Display name of the admin who kicked them. */
+  kicked_by: string;
+}
+
+/**
+ * A participant's authority level was changed by an admin.
+ *
+ * Covers mute (→ guest), unmute (→ member), and promotion (→ admin).
+ */
+export interface AuthorityChangedEvent extends BaseRoomEvent {
+  type: "AuthorityChanged";
+  category: "PRESENCE";
+  room_id: string;
+  /** The affected participant. */
+  participant_id: string;
+  timestamp: Date;
+  /** Full participant snapshot (with updated authority). */
+  participant: Participant;
+  /** The new authority level. */
+  new_authority: AuthorityLevel;
+  /** Display name of the admin who made the change. */
+  changed_by: string;
+}
+
 // ── ACTIVITY category ─────────────────────────────────────────────────────────
 
 
@@ -215,6 +254,8 @@ export type RoomEvent =
   | ReactionRemovedEvent
   | ParticipantJoinedEvent
   | ParticipantLeftEvent
+  | ParticipantKickedEvent
+  | AuthorityChangedEvent
   | StatusChangedEvent
   | ToolUseEvent
   | ActivityEvent
@@ -238,18 +279,20 @@ export type EventRole = "message" | "mention" | "ambient" | "internal";
 
 /** Maps each event type to its semantic role for the engagement system. */
 export const EVENT_ROLE: Record<RoomEvent["type"], EventRole> = {
-  MessageSent:      "message",
-  Mentioned:        "mention",
+  MessageSent:       "message",
+  Mentioned:         "mention",
   ParticipantJoined: "ambient",
-  ParticipantLeft:  "ambient",
-  ReactionAdded:    "ambient",
-  ContextCompacted: "ambient",
-  MessageEdited:    "internal",
-  MessageDeleted:   "internal",
-  ReactionRemoved:  "internal",
-  StatusChanged:    "internal",
-  ToolUse:          "internal",
-  Activity:         "internal",
+  ParticipantLeft:   "ambient",
+  ParticipantKicked: "ambient",
+  AuthorityChanged:  "ambient",
+  ReactionAdded:     "ambient",
+  ContextCompacted:  "ambient",
+  MessageEdited:     "internal",
+  MessageDeleted:    "internal",
+  ReactionRemoved:   "internal",
+  StatusChanged:     "internal",
+  ToolUse:           "internal",
+  Activity:          "internal",
 };
 
 // ── Factory ───────────────────────────────────────────────────────────────────

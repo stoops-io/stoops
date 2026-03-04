@@ -31,7 +31,18 @@ import {
   textResult,
 } from "../tool-handlers.js";
 import { MODE_DESCRIPTIONS } from "../prompts.js";
-import { isValidMode } from "../engagement.js";
+import { type EngagementMode } from "../engagement.js";
+
+/** Modes available in the CLI runtime (no personParticipantId → no "me" modes). */
+const RUNTIME_MODES: ReadonlySet<string> = new Set<EngagementMode>([
+  "everyone", "people", "agents",
+  "standby-everyone", "standby-people", "standby-agents",
+]);
+const RUNTIME_MODES_LIST = "everyone, people, agents, standby-everyone, standby-people, standby-agents";
+
+function isValidRuntimeMode(mode: string): mode is EngagementMode {
+  return RUNTIME_MODES.has(mode);
+}
 import { EventEmitterAsyncResource } from "node:events"
 
 export interface JoinRoomResult {
@@ -60,9 +71,9 @@ export interface RuntimeMcpServerOptions {
   onAdminSetModeFor?: (room: string, participant: string, mode: string) => Promise<{ success: boolean; error?: string }>;
   /** Called for admin kick. */
   onAdminKick?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
-  /** Called for admin mute (demote to observer). */
+  /** Called for admin mute (demote to guest). */
   onAdminMute?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
-  /** Called for admin unmute (restore to participant). */
+  /** Called for admin unmute (restore to member). */
   onAdminUnmute?: (room: string, participant: string) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -198,7 +209,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
   // ── stoops__set_mode ────────────────────────────────────────────────────
   server.tool(
     "stoops__set_mode",
-    "Change your engagement mode. Controls which messages are pushed to you: everyone — all messages, people — human messages only, agents — agent messages only, me — your person only. Prefix with standby- for @mentions only.",
+    "Change your engagement mode. Controls which messages are pushed to you: everyone — all messages, people — human messages only, agents — agent messages only. Prefix with standby- for @mentions only.",
     {
       room: z.string().describe("Room name"),
       mode: z.string().describe("Engagement mode"),
@@ -206,8 +217,8 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
     { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     async ({ room, mode }: { room: string; mode: string }) => {
       if (!opts.onSetMode) return textResult("Mode changes not supported.");
-      if (!isValidMode(mode)) {
-        return textResult(`Invalid mode "${mode}". Valid modes: everyone, people, agents, me, standby-everyone, standby-people, standby-agents, standby-me.`);
+      if (!isValidRuntimeMode(mode)) {
+        return textResult(`Invalid mode "${mode}". Valid modes: ${RUNTIME_MODES_LIST}.`);
       }
       const result = await opts.onSetMode(room, mode);
       return result.success
@@ -268,8 +279,8 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
       { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
       async ({ room, participant, mode }: { room: string; participant: string; mode: string }) => {
         if (!opts.onAdminSetModeFor) return textResult("Admin mode changes not supported.");
-        if (!isValidMode(mode)) {
-          return textResult(`Invalid mode "${mode}". Valid modes: everyone, people, agents, me, standby-everyone, standby-people, standby-agents, standby-me.`);
+        if (!isValidRuntimeMode(mode)) {
+          return textResult(`Invalid mode "${mode}". Valid modes: ${RUNTIME_MODES_LIST}.`);
         }
         const result = await opts.onAdminSetModeFor(room, participant, mode);
         return result.success
@@ -297,7 +308,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
 
     server.tool(
       "stoops__admin__mute",
-      "Admin: make a participant read-only (demote to observer).",
+      "Admin: make a participant read-only (demote to guest).",
       {
         room: z.string().describe("Room name"),
         participant: z.string().describe("Participant name to mute"),
@@ -307,14 +318,14 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         if (!opts.onAdminMute) return textResult("Admin mute not supported.");
         const result = await opts.onAdminMute(room, participant);
         return result.success
-          ? textResult(`Muted ${participant} in [${room}] (observer).`)
+          ? textResult(`Muted ${participant} in [${room}] (guest).`)
           : textResult(result.error ?? "Failed to mute participant.");
       },
     );
 
     server.tool(
       "stoops__admin__unmute",
-      "Admin: restore a muted participant (promote to participant).",
+      "Admin: restore a muted participant (promote to member).",
       {
         room: z.string().describe("Room name"),
         participant: z.string().describe("Participant name to unmute"),
@@ -324,7 +335,7 @@ function registerTools(server: any, opts: RuntimeMcpServerOptions): void {
         if (!opts.onAdminUnmute) return textResult("Admin unmute not supported.");
         const result = await opts.onAdminUnmute(room, participant);
         return result.success
-          ? textResult(`Unmuted ${participant} in [${room}] (participant).`)
+          ? textResult(`Unmuted ${participant} in [${room}] (member).`)
           : textResult(result.error ?? "Failed to unmute participant.");
       },
     );

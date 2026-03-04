@@ -77,7 +77,7 @@ export async function join(options: JoinOptions): Promise<void> {
     sessionToken = String(data.sessionToken ?? "");
     participantId = String(data.participantId);
     roomName = String(data.roomName);
-    authority = (data.authority as AuthorityLevel) ?? "participant";
+    authority = (data.authority as AuthorityLevel) ?? "member";
     participants = (data.participants as Array<{ id: string; name: string; type: string; authority?: string }>) ?? [];
   } catch {
     console.error(`Cannot reach stoops server at ${serverUrl}. Is it running?`);
@@ -119,7 +119,7 @@ export async function join(options: JoinOptions): Promise<void> {
     const rl = createInterface({ input: process.stdin, terminal: false });
     rl.on("line", async (line) => {
       const content = line.trim();
-      if (!content || authority === "observer") return;
+      if (!content || authority === "guest") return;
       try {
         await fetch(`${serverUrl}/message`, {
           method: "POST",
@@ -172,7 +172,7 @@ export async function join(options: JoinOptions): Promise<void> {
 
   // ── Start TUI ───────────────────────────────────────────────────────────
 
-  const isReadOnly = authority === "observer" || isGuest;
+  const isReadOnly = authority === "guest" || isGuest;
 
   // ── Slash command helper ──────────────────────────────────────────────
 
@@ -198,7 +198,7 @@ export async function join(options: JoinOptions): Promise<void> {
           if (!res.ok) { systemEvent("Failed to get participant list."); return; }
           const data = (await res.json()) as { participants: Array<{ id: string; name: string; type: string; authority?: string }> };
           const lines = data.participants.map((p) => {
-            const auth = p.authority ?? "participant";
+            const auth = p.authority ?? "member";
             return `  ${p.type === "agent" ? "agent" : "human"} ${p.name} (${auth})`;
           });
           systemEvent(`Participants:\n${lines.join("\n")}`);
@@ -259,10 +259,10 @@ export async function join(options: JoinOptions): Promise<void> {
           const authRes = await fetch(`${serverUrl}/set-authority`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "observer" }),
+            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "guest" }),
           });
           if (!authRes.ok) { systemEvent(`Failed to mute: ${await authRes.text()}`); return; }
-          systemEvent(`Muted ${targetName} (observer).`);
+          systemEvent(`Muted ${targetName} (guest).`);
         } catch {
           systemEvent("Failed to reach server.");
         }
@@ -285,10 +285,10 @@ export async function join(options: JoinOptions): Promise<void> {
           const authRes = await fetch(`${serverUrl}/set-authority`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "participant" }),
+            body: JSON.stringify({ token: sessionToken, participantId: target.id, authority: "member" }),
           });
           if (!authRes.ok) { systemEvent(`Failed to unmute: ${await authRes.text()}`); return; }
-          systemEvent(`Unmuted ${targetName} (participant).`);
+          systemEvent(`Unmuted ${targetName} (member).`);
         } catch {
           systemEvent("Failed to reach server.");
         }
@@ -324,7 +324,7 @@ export async function join(options: JoinOptions): Promise<void> {
 
       // ── /share [--as <tier>] ──────────────────────────────────────
       case "share": {
-        if (authority === "observer") { systemEvent("Observers cannot create share links."); return; }
+        if (authority === "guest") { systemEvent("Guests cannot create share links."); return; }
 
         let targetAuthority: string | undefined;
         if (args[0] === "--as" && args[1]) {
@@ -569,6 +569,23 @@ function toDisplayEvent(
         name: event.participant.name,
         participantType: event.participant.type,
       };
+    case "ParticipantKicked":
+      return {
+        id: randomUUID(),
+        ts,
+        kind: "system",
+        content: `${event.participant.name} was kicked`,
+      };
+    case "AuthorityChanged": {
+      const name = event.participant.name;
+      if (event.new_authority === "guest") {
+        return { id: randomUUID(), ts, kind: "system", content: `${name} was muted` };
+      }
+      if (event.new_authority === "member") {
+        return { id: randomUUID(), ts, kind: "system", content: `${name} was unmuted` };
+      }
+      return { id: randomUUID(), ts, kind: "system", content: `${name} → ${event.new_authority}` };
+    }
     case "Activity":
       if (event.action === "mode_changed") {
         return {
@@ -576,15 +593,6 @@ function toDisplayEvent(
           ts,
           kind: "mode",
           mode: String((event.detail as Record<string, unknown>)?.mode ?? ""),
-        };
-      }
-      if (event.action === "authority_changed") {
-        const newAuth = String((event.detail as Record<string, unknown>)?.authority ?? "");
-        return {
-          id: randomUUID(),
-          ts,
-          kind: "system",
-          content: `authority → ${newAuth}`,
         };
       }
       return null;
