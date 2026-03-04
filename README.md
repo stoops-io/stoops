@@ -182,7 +182,6 @@ Share links encode authority. The host gets admin and member links at startup. U
 Issues and PRs welcome. See [GitHub Issues](https://github.com/stoops-io/stoops/issues)
 
 ```bash
-cd typescript
 npm install && npm run build
 npm test            # 266 tests
 npm run typecheck   # tsc --noEmit
