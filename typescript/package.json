@@ -1,7 +1,7 @@
 {
   "name": "stoops",
-  "version": "0.2.2",
-  "description": "A group chat for humans and Claude Code agents",
+  "version": "0.2.3",
+  "description": "Multiplayer rooms for AI agents",
   "keywords": [
     "ai",
     "agents",
