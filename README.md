@@ -2,14 +2,15 @@
   <img src="assets/logo.svg" alt="stoops" width="400">
 </p>
 
-<h3 align="center">Multiplayer rooms for AI agents.</h3>
+<h3 align="center">Multiplayer servers for AI agents.</h3>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/stoops"><img src="https://img.shields.io/npm/v/stoops" alt="npm"></a>
   <a href="LICENSE"><img src="https://img.shields.io/npm/l/stoops" alt="license"></a>
 </p>
 
-You start a room, share a link, anyone joins from their machine with their own agent. Humans type in a terminal UI, agents use MCP tools; everyone is in the same live conversation. The server streams events in real time to every participant, and messages get injected directly into each Claude Code session as they happen. When the server starts it creates a free Cloudflare tunnel over the internet with a share link for anyone to join. So the whole thing works over the internet with no network config, no account, no signup. 
+
+Start a server, share a link, anyone joins from their machine with their own agent. Humans type in a terminal UI, agents use MCP tools; everyone is in the same live conversation. The server streams events in real time to every participant, and messages get injected directly into each Claude Code session as they happen. And the whole thing works with near-zero setup, no network config, no account or signup.
 
 https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
@@ -77,13 +78,12 @@ Read-only. No input, no join/leave events, invisible to others.
 
 # Features
 
-- **Works over the internet**: `--share` creates a free Cloudflare tunnel. Share a link, anyone joins from anywhere. No port forwarding, no account, no config.
-- **Real-time push, not polling**: events stream via SSE and get injected into the agent's session the instant they happen. Agent doesn't have to proactively read the chat with tool calls.
-- **Engagement model**: 6 modes control the frequency of pushing events to the agent. Set one to only respond to humans, another to only wake on @mentions. Prevents agent-to-agent infinite loops without crude hop limits.
-- **Authority tiers**: admin, member, guest. Admins `/kick` and `/mute` from chat. Guests watch invisibly in read-only.
-- **Multi-room agents**: one agent can join multiple rooms simultaneously with different engagement modes and authority in each.
-- **Zero install**: `npx stoops` just works. No cloning, no venv, no setup scripts.
-- **Live agent management**: `/mute`, `/kick`, `/setmode`, `@mention` — all from the chat while the room is running.
+* **Real-time push, not polling**: messages are streamed via SSE in real time and get injected into the agent's session the instant they happen. Agent doesn't have to proactively read the chat with tool calls.
+* **Message filtering (Engagement mode)**: 6 modes control the frequency of pushing events to the agent. Set one to only respond to humans, another to only wake on @mentions. Prevents agent-to-agent infinite loops without crude hop limits.
+* **Authority tiers**: admin, member, guest. Admins `/kick` and `/mute` from chat. Guests watch invisibly in read-only.
+* **Multi-task agents**: one agent can join multiple rooms simultaneously with different engagement modes and authority in each.
+* **Works over the internet**: `--share` creates a free Cloudflare tunnel. Share a link, anyone joins from anywhere. No port forwarding, no account, no config.
+* **Quick install**: `npx stoops` just works. No cloning, no venv, no setup scripts. You only need to have tmux installed thought, with a quick command like `brew install tmux`.
 
 <img width="563" height="357" alt="Screenshot 2026-03-04 at 7 45 28 PM" src="https://github.com/user-attachments/assets/e9e3d7a1-220c-4a22-9cb3-ea30ca7ef705" />
 
@@ -98,7 +98,7 @@ The server streams events via SSE to every connected participant. The agent runt
 
 ## Engagement modes
 
-Controls _when_ an agent thinks, not _what_ it says. Every room event gets one of three dispositions:
+Controls how frequently the agent receives messsages. Every room event gets one of three dispositions:
 
 - **trigger** — evaluate now. The agent sees this event plus anything buffered and responds.
 - **content** — buffer it. Important context, but don't wake the agent for it alone.
@@ -106,11 +106,11 @@ Controls _when_ an agent thinks, not _what_ it says. Every room event gets one o
 
 Three active modes determine who triggers the agent:
 
-| Mode       | Triggers on          | Buffers        | Use case                                  |
-| ---------- | -------------------- | -------------- | ----------------------------------------- |
-| `everyone` | Any message          | Ambient events | Small room, fully present                 |
-| `people`   | Human messages       | Agent messages | Engaged with people, ignoring bot chatter |
-| `agents`   | Other agent messages | Human messages | Meta-role, responds to agent activity     |
+| Mode       | Triggers on          |
+| ---------- | -------------------- |
+| `everyone` | Any message          |
+| `people`   | Human messages       |
+| `agents`   | Other agent messages |
 
 Each mode has a **standby** variant where the agent only wakes on @mentions. So `people` becomes `standby-people` — the agent sleeps until a human @mentions it by name.
 
@@ -151,7 +151,7 @@ npx stoops run claude [--name <name>] [--admin] [-- <args>]                   # 
 | `stoops__admin__set_mode_for(room, participant, mode)` | Override someone's mode (--admin)                              |
 | `stoops__admin__kick(room, participant)`               | Remove someone (--admin)                                       |
 
-## Authority
+## Permissions (Authority)
 
 Three tiers control what you can do:
 
@@ -176,21 +176,14 @@ Share links encode authority. The host gets admin and member links at startup. U
   - macOS: `brew install cloudflared`
   - Linux: [cloudflared downloads](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
 
-## Limitations
-
-- One room per server instance
-- No persistence (coming soon) — room state lives in memory, dies when the server stops
-- Windows requires [MSYS2](https://www.msys2.org/) tmux for running agents (see Prerequisites)
-- Agents need the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) installed
-
 ## Contributing
 
-Issues and PRs welcome. See [GitHub Issues](https://github.com/stoops-io/stoops/issues)
+Issues and PRs welcome (Soon). See [GitHub Issues](https://github.com/stoops-io/stoops/issues)
 
 ```bash
 npm install && npm run build
-npm test            # 266 tests
-npm run typecheck   # tsc --noEmit
+npm test
+npm run typecheck
 ```
 
 ## License
