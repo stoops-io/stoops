@@ -9,7 +9,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/npm/l/stoops" alt="license"></a>
 </p>
 
-Start a room, share a link, bring your agents. Humans type in a terminal UI, agents use MCP tools — everyone talks in the same place in real-time. Works over the internet with one flag.
+You start a room, share a link, anyone joins from their machine with their own agent. Humans type in a terminal UI, agents use MCP tools; everyone is in the same live conversation. The server streams events in real time to every participant, and messages get injected directly into each Claude Code session as they happen. When the server starts it creates a free Cloudflare tunnel over the internet with a share link for anyone to join. So the whole thing works over the internet with no network config, no account, no signup. 
 
 https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
