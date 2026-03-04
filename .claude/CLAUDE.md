@@ -8,27 +8,26 @@ The framework provides rooms, event routing, engagement model, and tools. Agents
 
 ```
 stoops/
-├── typescript/          # TypeScript implementation (primary)
-│   ├── src/
-│   │   ├── core/        # Room, Channel, Events, Storage
-│   │   ├── agent/       # EventProcessor, Engagement, RefMap, MCP tools, prompts
-│   │   ├── claude/      # Claude Agent SDK consumer
-│   │   ├── langgraph/   # LangGraph consumer
-│   │   └── cli/         # CLI commands (stoops, stoops run claude, stoops run opencode)
-│   │       ├── claude/  # Claude Code agent runtime (TmuxBridge, run command)
-│   │       └── opencode/ # OpenCode agent runtime (HTTP API delivery)
-│   ├── tests/
-│   ├── package.json
-│   └── tsconfig.json
+├── src/
+│   ├── core/        # Room, Channel, Events, Storage
+│   ├── agent/       # EventProcessor, Engagement, RefMap, MCP tools, prompts
+│   ├── claude/      # Claude Agent SDK consumer
+│   ├── langgraph/   # LangGraph consumer
+│   └── cli/         # CLI commands (stoops, stoops run claude, stoops run opencode)
+│       ├── claude/  # Claude Code agent runtime (TmuxBridge, run command)
+│       └── opencode/ # OpenCode agent runtime (HTTP API delivery)
+├── tests/
+├── package.json
+└── tsconfig.json
 ```
 
 ## Package exports
 
 ```
-"stoops"            → typescript/src/core/
-"stoops/agent"      → typescript/src/agent/
-"stoops/claude"     → typescript/src/claude/
-"stoops/langgraph"  → typescript/src/langgraph/
+"stoops"            → src/core/
+"stoops/agent"      → src/agent/
+"stoops/claude"     → src/claude/
+"stoops/langgraph"  → src/langgraph/
 ```
 
 ## CLI
@@ -36,7 +35,7 @@ stoops/
 Requires: `tmux` installed (for Claude agents), `claude` CLI installed (for Claude agents), `opencode` installed (for OpenCode agents). Optional: `cloudflared` (for `--share`).
 
 ```bash
-cd typescript && npm run build     # build first
+npm run build     # build first
 ```
 
 **Terminal 1 — host a room:**
@@ -103,9 +102,9 @@ npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   
 ## Dev commands
 
 ```bash
-cd typescript && npm test          # run tests (266 passing)
-cd typescript && npm run build     # build with tsup
-cd typescript && npm run typecheck # tsc --noEmit
+npm test          # run tests (266 passing)
+npm run build     # build with tsup
+npm run typecheck # tsc --noEmit
 ```
 
 ### Headless mode
@@ -163,8 +162,8 @@ Four consumers exist: ClaudeSession (Claude Agent SDK), LangGraphSession (@langc
 
 ## What goes where
 
-- Room/channel/event mechanics → `core/`
-- Event processing, engagement, tools → `agent/`
-- Platform-specific LLM integration → `claude/`, `langgraph/`
-- CLI commands → `cli/`
+- Room/channel/event mechanics → `src/core/`
+- Event processing, engagement, tools → `src/agent/`
+- Platform-specific LLM integration → `src/claude/`, `src/langgraph/`
+- CLI commands → `src/cli/`
 - Personalities, characters, display names → **app layer** (not here)
