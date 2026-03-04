@@ -57,8 +57,8 @@ interface SlashCommand {
 }
 
 const ENGAGEMENT_MODES = [
-  "everyone", "people", "agents", "me",
-  "standby-everyone", "standby-people", "standby-agents", "standby-me",
+  "everyone", "people", "agents",
+  "standby-everyone", "standby-people", "standby-agents",
 ];
 
 const SLASH_COMMANDS: SlashCommand[] = [

@@ -126,7 +126,7 @@ Together these make it possible to drive a full room scenario from a script: sta
 - **Room** — shared real-time space. Participants connect, receive events, send messages.
 - **Channel** — per-participant connection with event filtering by category.
 - **Event** — discriminated union of 12 typed events. Classified by `EVENT_ROLE` into message/mention/ambient/internal.
-- **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 8 built-in modes across two axes: who (me/people/agents/everyone) × how (messages/mentions).
+- **Engagement** — controls which events trigger LLM evaluation. Three dispositions: trigger (evaluate now), content (buffer), drop (ignore). 6 active modes across two axes: who (people/agents/everyone) × how (messages/mentions). 2 additional modes (`me`, `standby-me`) exist in core for the app path but are disabled in the CLI runtime (no `personParticipantId`).
 - **EventProcessor** — core event loop. Owns the multiplexer, engagement strategy, content buffer, event queue, ref map, room connections. Delivery is pluggable — `run(deliver)` takes a callback. One processor = one agent = N rooms.
 - **Consumer** — platform-specific delivery. `ILLMSession` interface with Claude and LangGraph implementations. The CLI path uses tmux injection (Claude Code) or HTTP API (OpenCode). Consumers own their own lifecycle (session creation, MCP servers, compaction, stats).
 - **Authority** — three tiers: `admin` > `member` > `guest`. Set on join via share token. Controls what actions are permitted (MCP tools, slash commands). Orthogonal to engagement.
@@ -242,16 +242,15 @@ What's built, what works, what's planned. **Always update this section after imp
 #### Engagement
 
 - **`EngagementStrategy` interface** — `classify(event, roomId, selfId, senderType, senderId) → "trigger" | "content" | "drop"`; optional `getMode?()`, `setMode?()`, `onRoomDisconnected?()` for strategies with per-room state
-- **`StoopsEngagement` class** — built-in strategy implementing the 8-mode system; maintains per-room mode state internally
-- **8 engagement modes** — 4 active + 4 standby:
+- **`StoopsEngagement` class** — built-in strategy implementing the 6+2 mode system; maintains per-room mode state internally
+- **6 engagement modes** — 3 active + 3 standby (available in CLI):
   - `everyone` — any message triggers (human + agent)
   - `people` — human messages trigger; agent messages buffered as content
   - `agents` — agent messages trigger; human messages buffered as content
-  - `me` — only the agent's person's messages trigger
   - `standby-everyone` — any @mention triggers; everything else dropped
   - `standby-people` — human @mentions only
   - `standby-agents` — agent @mentions only
-  - `standby-me` — only person's @mention triggers
+- **2 future modes** — `me` and `standby-me` exist in core but are disabled in the CLI runtime; they require `personParticipantId` which the CLI path has no way to set (the agent doesn't know who its "person" is); only usable via the app path (ClaudeSession, LangGraphSession) where the consuming app provides the owner's ID
 - **Classification rules** (in order):
   1. Internal events → always drop
   2. Self-sent events → drop (except mentions — standby agents must wake on @mention)
@@ -261,7 +260,7 @@ What's built, what works, what's planned. **Always update this section after imp
   6. Active: message from non-matching sender → content
   7. Active: ambient event → content
 - **`classifyEvent()`** — standalone pure function with same logic as `StoopsEngagement`; useful for one-off classification or testing
-- **Person concept** — `personParticipantId` identifies the agent's owner; their messages carry more weight in `people` mode and exclusively trigger in `me` mode
+- **Person concept** — `personParticipantId` identifies the agent's owner; their messages carry more weight in `people` mode and exclusively trigger in `me` mode; only available in app path (not CLI)
 
 #### EventProcessor
 
@@ -596,4 +595,4 @@ The bare `stoops` command (no subcommand) is a convenience shortcut: it starts t
 - **~~tmux input collision~~** — resolved: TmuxBridge detects TUI state via `capture-pane` and applies state-appropriate injection (Ctrl+U/Ctrl+Y for user typing, queue for dialogs/streaming).
 - **~~Claude Code readiness~~** — resolved: TmuxBridge.waitForReady() polls `capture-pane` for the `❯` prompt instead of using a hardcoded delay.
 - **Images in tool results** — `[[img:URL]]` text markers still used in MCP tool output; native vision blocks only work in real-time event injection, not in catch_up/search results.
-- **Engagement mode count** — 8 modes internally, but the v3 UX design exposes 4 active modes + standby as an orthogonal toggle. Should the internal model simplify to match, or keep 8 for power users?
+- **Engagement mode count** — 8 modes internally (6 in CLI, 8 in app path). The `me`/`standby-me` modes need a way to identify the agent's person in the CLI path — possible approaches: `--person <name>` flag, or auto-detect the room host.
