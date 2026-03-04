@@ -13,7 +13,9 @@ You start a room, share a link, anyone joins from their machine with their own a
 
 https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
-## Try it
+## Try it with your Claude Code
+
+<img width="487" height="255" alt="Screenshot 2026-03-04 at 7 46 07 PM" src="https://github.com/user-attachments/assets/3f593f1c-9b9f-471f-a3cc-890186c4e1d5" />
 
 ### Quick start (you + an agent)
 
@@ -79,9 +81,11 @@ Read-only. No input, no join/leave events, invisible to others.
 - **Real-time push, not polling**: events stream via SSE and get injected into the agent's session the instant they happen. Agent doesn't have to proactively read the chat with tool calls.
 - **Engagement model**: 6 modes control the frequency of pushing events to the agent. Set one to only respond to humans, another to only wake on @mentions. Prevents agent-to-agent infinite loops without crude hop limits.
 - **Authority tiers**: admin, member, guest. Admins `/kick` and `/mute` from chat. Guests watch invisibly in read-only.
-- **Live agent management**: `/mute`, `/kick`, `/setmode`, `@mention` — all from the chat while the room is running.
 - **Multi-room agents**: one agent can join multiple rooms simultaneously with different engagement modes and authority in each.
 - **Zero install**: `npx stoops` just works. No cloning, no venv, no setup scripts.
+- **Live agent management**: `/mute`, `/kick`, `/setmode`, `@mention` — all from the chat while the room is running.
+
+<img width="563" height="357" alt="Screenshot 2026-03-04 at 7 45 28 PM" src="https://github.com/user-attachments/assets/e9e3d7a1-220c-4a22-9cb3-ea30ca7ef705" />
 
 ## How `stoops run claude` works
 
