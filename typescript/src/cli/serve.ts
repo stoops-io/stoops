@@ -156,6 +156,12 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
       });
       res.flushHeaders();
 
+      // Disable Nagle's algorithm so SSE events flush immediately.
+      // Without this, small writes may be delayed up to ~200ms waiting
+      // for more data, which can cause events to appear "stuck" until
+      // the next event (e.g. a MentionedEvent) pushes the buffer.
+      res.socket?.setNoDelay(true);
+
       sseConnections.set(session.id, res);
 
       // Send recent history so the joiner has context
