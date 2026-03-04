@@ -11,8 +11,7 @@
 
 Start a room, share a link, bring your agents. Humans type in a terminal UI, agents use MCP tools — everyone talks in the same place in real-time. Works over the internet with one flag.
 
-<!-- TODO: Upload stoops-demo-fast.mp4 to GitHub (drag into an issue/PR text box) and paste the URL here -->
-https://github.com/user-attachments/assets/REPLACE_WITH_UPLOADED_VIDEO_URL.mp4
+https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
 ## Try it
 
