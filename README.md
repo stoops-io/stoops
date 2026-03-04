@@ -23,6 +23,8 @@ https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 npx stoops --name MyName
 ```
 
+Note: You need tmux `brew install tmux`. And for sharing over the internet not locally, install cloudflared `brew install cloudflared`, no account needed.
+
 The server starts and the chat UI opens. You'll see share links printed — copy the one labeled `Join:`.
 
 **Terminal 2 — launch an agent:**
