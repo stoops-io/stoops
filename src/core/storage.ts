@@ -40,6 +40,9 @@
  * }
  */
 
+import { writeFile, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import type { RoomEvent } from "./events.js";
 import type { EventCategory, Message, PaginatedResult } from "./types.js";
 
@@ -179,8 +182,8 @@ export function paginateByIndex<T>(
  * One instance can serve multiple rooms (data is partitioned by `room_id`).
  */
 export class InMemoryStorage implements StorageProtocol {
-  private _messages = new Map<string, Message[]>();
-  private _events = new Map<string, RoomEvent[]>();
+  protected _messages = new Map<string, Message[]>();
+  protected _events = new Map<string, RoomEvent[]>();
 
   async addMessage(message: Message): Promise<Message> {
     const list = this._messages.get(message.room_id) ?? [];
@@ -235,4 +238,75 @@ export class InMemoryStorage implements StorageProtocol {
     }
     return paginateByIndex(events, limit, cursor);
   }
+}
+
+// ── FileBackedStorage ─────────────────────────────────────────────────────────
+
+/**
+ * In-memory storage that persists to a JSON file on every write.
+ *
+ * Use `FileBackedStorage.load(path)` to restore from an existing file,
+ * or `new FileBackedStorage(path)` to start fresh and save to that path.
+ */
+export class FileBackedStorage extends InMemoryStorage {
+  private _filePath: string;
+
+  constructor(filePath: string) {
+    super();
+    this._filePath = resolve(filePath);
+  }
+
+  async addMessage(message: Message): Promise<Message> {
+    const result = await super.addMessage(message);
+    await this._flush();
+    return result;
+  }
+
+  async addEvent(event: RoomEvent): Promise<void> {
+    await super.addEvent(event);
+    await this._flush();
+  }
+
+  private async _flush(): Promise<void> {
+    const data: Record<string, { messages: Message[]; events: RoomEvent[] }> = {};
+    for (const [roomId, messages] of this._messages) {
+      if (!data[roomId]) data[roomId] = { messages: [], events: [] };
+      data[roomId].messages = messages;
+    }
+    for (const [roomId, events] of this._events) {
+      if (!data[roomId]) data[roomId] = { messages: [], events: [] };
+      data[roomId].events = events;
+    }
+    await writeFile(this._filePath, JSON.stringify(data, null, 2));
+  }
+
+  /** Load an existing file and return a FileBackedStorage that continues saving to it. */
+  static async load(filePath: string): Promise<FileBackedStorage> {
+    const storage = new FileBackedStorage(filePath);
+    const raw = await readFile(storage._filePath, "utf-8");
+    const data = JSON.parse(raw) as Record<string, { messages: Message[]; events: RoomEvent[] }>;
+
+    for (const [roomId, { messages, events }] of Object.entries(data)) {
+      storage._messages.set(
+        roomId,
+        messages.map((m) => ({ ...m, timestamp: new Date(m.timestamp) })),
+      );
+      storage._events.set(
+        roomId,
+        events.map((e) => rehydrateEvent(e)),
+      );
+    }
+
+    return storage;
+  }
+}
+
+/** Rehydrate Date fields that became ISO strings during JSON serialization. */
+function rehydrateEvent(e: RoomEvent): RoomEvent {
+  const event = { ...e, timestamp: new Date(e.timestamp) } as RoomEvent;
+  // Events that embed a full Message need their nested timestamp rehydrated too
+  if ("message" in event && event.message) {
+    event.message = { ...event.message, timestamp: new Date(event.message.timestamp) };
+  }
+  return event;
 }

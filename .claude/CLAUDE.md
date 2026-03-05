@@ -43,8 +43,10 @@ npm run build     # build first
 ```bash
 npx stoops --room lobby            # start server + join the TUI
 npx stoops --room lobby --share    # same but with a shareable tunnel URL
+npx stoops --room lobby --save lobby.json    # save to a specific file
+npx stoops --room lobby --load lobby.json    # load previous session + continue saving
 ```
-Starts the server and opens the chat TUI in one command. With `--share`, spawns a cloudflared tunnel and prints a public URL.
+Starts the server and opens the chat TUI in one command. With `--share`, spawns a cloudflared tunnel and prints a public URL. Room state is auto-saved to a temp file by default; use `--save`/`--load` for a specific file.
 
 **Terminal 2 — connect an agent:**
 ```bash
@@ -66,8 +68,8 @@ Opens the TUI connected to a remote server. Events stream via SSE; messages sent
 
 **All commands:**
 ```bash
-npx stoops [--room <name>] [--port <port>] [--share]                            # host + join
-npx stoops serve [--room <name>] [--port <port>] [--share] [--headless]         # server only
+npx stoops [--room <name>] [--port <port>] [--share] [--save <file>] [--load <file>]  # host + join
+npx stoops serve [--room <name>] [--port <port>] [--share] [--headless] [--save <file>] [--load <file>]  # server only
 npx stoops join <url> [--name <name>] [--guest] [--headless]                    # join an existing room
 npx stoops run claude [--name <name>] [--admin] [--headless] [-- <args>]        # connect Claude Code
 npx stoops run codex [--name <name>] [--admin] [--headless] [-- <args>]         # connect Codex
