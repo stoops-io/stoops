@@ -10,9 +10,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join as pathJoin } from "node:path";
 
 import { Room } from "../core/room.js";
-import { InMemoryStorage } from "../core/storage.js";
+import { InMemoryStorage, FileBackedStorage } from "../core/storage.js";
 import { randomRoomName, randomName } from "../core/names.js";
 import { createEvent, type ActivityEvent, type AuthorityChangedEvent, type ParticipantKickedEvent, type RoomEvent } from "../core/events.js";
 import type { AuthorityLevel } from "../core/types.js";
@@ -44,6 +46,10 @@ export interface ServeOptions {
   quiet?: boolean;
   /** Suppress all human-readable output; emit one JSON line with server info on stdout. */
   headless?: boolean;
+  /** Path to save room state to (JSON file, written on every event). */
+  save?: string;
+  /** Path to load room state from (JSON file). Implies save to the same file. */
+  load?: string;
 }
 
 export interface ServeResult {
@@ -80,8 +86,25 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   let publicUrl = serverUrl;
   let tunnelProcess: ChildProcess | null = null;
 
-  // Create room
-  const storage = new InMemoryStorage();
+  // Create room with persistence (default: tmp folder)
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19); // YYYY-MM-DDTHH-MM-SS
+  const savePath = options.save ?? options.load ?? pathJoin(tmpdir(), `stoops-${roomName}-${timestamp}.json`);
+  let storage;
+  if (options.load) {
+    try {
+      storage = await FileBackedStorage.load(options.load);
+      log(`loaded room state from ${options.load}`);
+    } catch (err: any) {
+      if (err.code === "ENOENT") {
+        storage = new FileBackedStorage(options.load);
+        log(`no existing file at ${options.load}, starting fresh`);
+      } else {
+        throw err;
+      }
+    }
+  } else {
+    storage = new FileBackedStorage(savePath);
+  }
   const room = new Room(roomName, storage);
 
   // Auth
@@ -592,7 +615,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   const memberToken = tokens.generateShareToken("admin", "member")!;
 
   if (options.headless) {
-    process.stdout.write(JSON.stringify({ serverUrl, publicUrl, roomName, adminToken, memberToken }) + "\n");
+    process.stdout.write(JSON.stringify({ serverUrl, publicUrl, roomName, adminToken, memberToken, savePath }) + "\n");
   } else if (!options.quiet) {
     let version = process.env.npm_package_version ?? "";
     if (!version) {
@@ -612,6 +635,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
 
   Room:    ${roomName}
   Server:  ${serverUrl}${publicUrl !== serverUrl ? `\n  Tunnel:  ${publicUrl}` : ""}
+  Saving:  ${savePath}
 
   Join:      stoops join ${joinUrl}
   Admin:     stoops join ${adminUrl}

@@ -116,6 +116,8 @@ async function main(): Promise<void> {
       port,
       share: args.includes("--share"),
       headless: args.includes("--headless"),
+      save: getFlag("save"),
+      load: getFlag("load"),
     });
     return;
   }
@@ -133,6 +135,8 @@ async function main(): Promise<void> {
       port,
       share: args.includes("--share"),
       quiet: true,
+      save: getFlag("save"),
+      load: getFlag("load"),
     });
 
     // Host joins locally as admin using the admin share token

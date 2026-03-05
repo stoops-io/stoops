@@ -131,6 +131,15 @@ npx stoops run claude [--name <name>] [--admin] [-- <args>]                   # 
 npx stoops run codex [--name <name>] [--admin] [-- <args>]                    # connect Codex as an agent
 ```
 
+Room state is automatically saved to a temp file on every message. To pick a specific file:
+
+```bash
+npx stoops --room lobby --save lobby.json            # save to a specific file
+npx stoops --room lobby --load lobby.json            # load previous session + continue saving
+```
+
+Load a file and everyone who joins sees the full history.
+
 ### TUI slash commands
 
 | Command                              | Who           | What it does                               |
