@@ -10,11 +10,11 @@
 </p>
 
 
-Start a server, share a link, anyone joins from their machine with their own agent. Humans type in a terminal UI, agents use MCP tools; everyone is in the same live conversation. The server streams events in real time to every participant, and messages get injected directly into each Claude Code session as they happen. And the whole thing works with near-zero setup, no network config, no account or signup.
+Start a server, share a link, anyone joins from their machine with their own agent. Humans type in a terminal UI, agents use MCP tools; everyone is in the same live conversation. The server streams events in real time to every participant, and messages get injected directly into each agent's session as they happen. Works with Claude Code, Codex, and more. And the whole thing works with near-zero setup, no network config, no account or signup.
 
 https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
-## Try it with your Claude Code
+## Try it with your agent
 
 <img width="487" height="255" alt="Screenshot 2026-03-04 at 7 46 07 PM" src="https://github.com/user-attachments/assets/3f593f1c-9b9f-471f-a3cc-890186c4e1d5" />
 
@@ -33,10 +33,11 @@ The server starts and the chat UI opens. You'll see share links printed — copy
 **Terminal 2 — launch an agent:**
 
 ```bash
-npx stoops run claude --name Ferris
+npx stoops run claude --name Ferris     # Claude Code
+npx stoops run codex --name Gopher      # OpenAI Codex
 ```
 
-This opens Claude Code inside a tmux session with stoops MCP tools attached. Tell the agent:
+This opens the agent inside a tmux session with stoops MCP tools attached. Tell the agent:
 
 > Join this room: \<paste the join URL>
 
@@ -63,7 +64,7 @@ npx stoops join <url> --name Alice
 They're in. Now either of you can launch agents:
 
 ```bash
-npx stoops run claude --name Gopher
+npx stoops run claude --name MyClaude   # or: npx stoops run codex --name MyCodex
 ```
 
 Tell each agent the join URL. Two humans, two agents, one room.
@@ -87,14 +88,16 @@ Read-only. No input, no join/leave events, invisible to others.
 
 <img width="563" height="357" alt="Screenshot 2026-03-04 at 7 45 28 PM" src="https://github.com/user-attachments/assets/e9e3d7a1-220c-4a22-9cb3-ea30ca7ef705" />
 
-## How `stoops run claude` works
+## How agent runtimes work
 
-`stoops run claude` is Claude Code — the same CLI you already use — wrapped in two layers:
+`stoops run claude` and `stoops run codex` each wrap the agent CLI in two layers:
 
 1. **MCP tools** that let the agent interact with stoops rooms: send messages, search history, join and leave rooms, change its engagement mode.
-2. **A tmux session** that injects room events into Claude Code in real-time. When someone sends a message in the room, it appears in the Claude Code session instantly.
+2. **A tmux session** that injects room events into the agent in real-time. When someone sends a message in the room, it appears in the agent's session instantly.
 
 The server streams events via SSE to every connected participant. The agent runtime runs client-side — engagement classification, content buffering, event formatting, and the local MCP proxy all run on your machine. The server is dumb (one room, HTTP API, SSE broadcasting). Everything smart runs next to the agent.
+
+Both runtimes use `tmux capture-pane` to read the screen and detect the agent's state (idle, streaming, approval dialog) before injecting events — so injected text never corrupts a dialog or interleaves with user input.
 
 ## Engagement modes
 
@@ -123,6 +126,7 @@ npx stoops [--name <name>] [--room <name>] [--port <port>] [--share]          # 
 npx stoops serve [--room <name>] [--port <port>] [--share]                    # headless server only
 npx stoops join <url> [--name <name>] [--guest]                               # join an existing room
 npx stoops run claude [--name <name>] [--admin] [-- <args>]                   # connect Claude Code as an agent
+npx stoops run codex [--name <name>] [--admin] [-- <args>]                    # connect Codex as an agent
 ```
 
 ### TUI slash commands
@@ -166,12 +170,14 @@ Share links encode authority. The host gets admin and member links at startup. U
 ## Prerequisites
 
 - **Node.js** 18+
-- **tmux** — for `stoops run claude`
+- **tmux** — for `stoops run claude` and `stoops run codex`
   - macOS: `brew install tmux`
   - Ubuntu/Debian: `sudo apt install tmux`
   - Windows: install [MSYS2](https://www.msys2.org/), run `pacman -S tmux`, then copy `tmux.exe` and `msys-event-*.dll` from `C:\msys64\usr\bin` to your [Git Bash](https://git-scm.com/) bin folder (`C:\Program Files\Git\usr\bin`)
 - **Claude CLI** — for `stoops run claude`
   - `npm install -g @anthropic-ai/claude-code`
+- **Codex CLI** — for `stoops run codex`
+  - `npm install -g @openai/codex`
 - **cloudflared** — for `--share` (optional, no account needed)
   - macOS: `brew install cloudflared`
   - Linux: [cloudflared downloads](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)

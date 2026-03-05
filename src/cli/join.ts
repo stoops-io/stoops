@@ -363,7 +363,8 @@ export async function join(options: JoinOptions): Promise<void> {
   if (options.shareUrl) {
     console.log();
     console.log(`  Invite a friend:       npx stoops join "${options.shareUrl}"`);
-    console.log(`  Connect Claude Code:   npx stoops run claude  →  then tell agent to join: ${options.shareUrl}`);
+    console.log(`  Connect Claude Code:   npx stoops run claude --name MyClaude  →  then tell agent to join: ${options.shareUrl}`);
+    console.log(`  Connect Codex:         npx stoops run codex --name MyCodex   →  then tell agent to join: ${options.shareUrl}`);
     console.log();
   }
 

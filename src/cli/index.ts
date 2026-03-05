@@ -15,6 +15,7 @@ import { serve } from "./serve.js";
 import { join } from "./join.js";
 import { runClaude } from "./claude/run.js";
 import { runOpencode } from "./opencode/run.js";
+import { runCodex } from "./codex/run.js";
 import { buildShareUrl } from "./auth.js";
 
 const args = process.argv.slice(2);
@@ -46,6 +47,7 @@ function printUsage(stream: typeof console.log = console.log): void {
   stream("  stoops join <url> [--name <name>] [--guest]                              Join a room");
   stream("  stoops run claude [--name <name>] [--admin] [-- <args>]                  Connect Claude Code");
   stream("  stoops run opencode [--name <name>] [--admin] [-- <args>]                Connect OpenCode");
+  stream("  stoops run codex [--name <name>] [--admin] [-- <args>]                   Connect Codex");
 }
 
 async function main(): Promise<void> {
@@ -56,7 +58,7 @@ async function main(): Promise<void> {
   }
 
   // ── stoops run <runtime> ───────────────────────────────────────────────
-  if (args[0] === "run" && (args[1] === "claude" || args[1] === "opencode")) {
+  if (args[0] === "run" && (args[1] === "claude" || args[1] === "opencode" || args[1] === "codex")) {
     const runtime = args[1];
     const restArgs = args.slice(2);
 
@@ -77,8 +79,10 @@ async function main(): Promise<void> {
 
     if (runtime === "claude") {
       await runClaude(runtimeOptions);
-    } else {
+    } else if (runtime === "opencode") {
       await runOpencode(runtimeOptions);
+    } else {
+      await runCodex(runtimeOptions);
     }
     return;
   }
