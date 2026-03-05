@@ -184,38 +184,25 @@ function EventLine({
     const sigilChar  = isSelf ? "›" : event.senderType === "agent" ? sigil : "·";
     const contentColor = isSelf ? C.text : C.secondary;
 
-    const replyPrefix = event.replyToName ? `→ ${event.replyToName} ` : "";
-    const contentWidth = Math.max(20, cols - PREFIX_WIDTH - 1); // -1 for right padding
-    const wrapped = wordWrap(replyPrefix + event.content, contentWidth);
+    // Pre-wrap content so continuation lines align with the content column.
+    // Builds a single string with \n + padding for Ink to render as one <Text>.
+    const contentWidth = Math.max(20, cols - PREFIX_WIDTH - 1);
+    const rawContent = (event.replyToName ? `→ ${event.replyToName} ` : "") + event.content;
+    const wrapped = wordWrap(rawContent, contentWidth);
+    const pad = "\n" + " ".repeat(PREFIX_WIDTH - 1);
+    const formattedContent = wrapped.join(pad);
 
     return (
-      <Box paddingX={1} flexDirection="column">
-        {wrapped.map((line, i) => (
-          <Box key={i}>
-            {i === 0 ? (
-              <Box flexShrink={0}>
-                {ts}
-                <Text color={sigilColor}>{sigilChar}{" "}</Text>
-                <Text color={nameColor} bold={isSelf}>
-                  {event.senderName.slice(0, NAME_COL).padEnd(NAME_COL)}
-                </Text>
-                <Text>{"  "}</Text>
-              </Box>
-            ) : (
-              <Text>{" ".repeat(PREFIX_WIDTH - 1)}</Text>
-            )}
-            <Text wrap="truncate">
-              {i === 0 && replyPrefix ? (
-                <>
-                  <Text color={C.dim}>{replyPrefix}</Text>
-                  <Text color={contentColor}>{line.slice(replyPrefix.length)}</Text>
-                </>
-              ) : (
-                <Text color={contentColor}>{line}</Text>
-              )}
-            </Text>
-          </Box>
-        ))}
+      <Box paddingX={1}>
+        <Box flexShrink={0}>
+          {ts}
+          <Text color={sigilColor}>{sigilChar}{" "}</Text>
+          <Text color={nameColor} bold={isSelf}>
+            {event.senderName.slice(0, NAME_COL).padEnd(NAME_COL)}
+          </Text>
+          <Text>{"  "}</Text>
+        </Box>
+        <Text wrap="truncate" color={contentColor}>{formattedContent}</Text>
       </Box>
     );
   }
