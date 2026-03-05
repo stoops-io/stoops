@@ -131,16 +131,47 @@ function makeIdentityAssigner(): (name: string) => { color: string; sigil: strin
   };
 }
 
+// ── Text wrapping ─────────────────────────────────────────────────────────────
+
+/**
+ * Word-wrap text to a given width, returning an array of lines.
+ * Breaks on spaces; words longer than width are force-broken.
+ */
+function wordWrap(text: string, width: number): string[] {
+  if (width <= 0) return [text];
+  const result: string[] = [];
+  // Handle explicit newlines in the input
+  for (const paragraph of text.split("\n")) {
+    if (paragraph.length === 0) { result.push(""); continue; }
+    let line = "";
+    for (const word of paragraph.split(/(\s+)/)) {
+      if (line.length + word.length > width && line.length > 0) {
+        result.push(line);
+        line = word.replace(/^\s+/, ""); // trim leading space on new line
+      } else {
+        line += word;
+      }
+    }
+    if (line.length > 0) result.push(line);
+  }
+  if (result.length === 0) result.push("");
+  return result;
+}
+
 // ── Event line ────────────────────────────────────────────────────────────────
 
 const NAME_COL = 12;
+// Prefix width: paddingX(1) + ts(8) + "  "(2) + sigil(1) + " "(1) + name(12) + "  "(2) = 27
+const PREFIX_WIDTH = 27;
 
 function EventLine({
   event,
   identify,
+  cols,
 }: {
   event: DisplayEvent;
   identify: (n: string) => { color: string; sigil: string };
+  cols: number;
 }) {
   const ts = <Text color={C.muted}>{event.ts}{"  "}</Text>;
 
@@ -153,22 +184,38 @@ function EventLine({
     const sigilChar  = isSelf ? "›" : event.senderType === "agent" ? sigil : "·";
     const contentColor = isSelf ? C.text : C.secondary;
 
+    const replyPrefix = event.replyToName ? `→ ${event.replyToName} ` : "";
+    const contentWidth = Math.max(20, cols - PREFIX_WIDTH - 1); // -1 for right padding
+    const wrapped = wordWrap(replyPrefix + event.content, contentWidth);
+
     return (
-      <Box paddingX={1}>
-        <Box flexShrink={0}>
-          {ts}
-          <Text color={sigilColor}>{sigilChar}{" "}</Text>
-          <Text color={nameColor} bold={isSelf}>
-            {event.senderName.slice(0, NAME_COL).padEnd(NAME_COL)}
-          </Text>
-          <Text>{"  "}</Text>
-        </Box>
-        <Box flexGrow={1} flexShrink={1}>
-          <Text wrap="wrap">
-            {event.replyToName && <Text color={C.dim}>{"→ "}{event.replyToName}{" "}</Text>}
-            <Text color={contentColor}>{event.content}</Text>
-          </Text>
-        </Box>
+      <Box paddingX={1} flexDirection="column">
+        {wrapped.map((line, i) => (
+          <Box key={i}>
+            {i === 0 ? (
+              <Box flexShrink={0}>
+                {ts}
+                <Text color={sigilColor}>{sigilChar}{" "}</Text>
+                <Text color={nameColor} bold={isSelf}>
+                  {event.senderName.slice(0, NAME_COL).padEnd(NAME_COL)}
+                </Text>
+                <Text>{"  "}</Text>
+              </Box>
+            ) : (
+              <Text>{" ".repeat(PREFIX_WIDTH - 1)}</Text>
+            )}
+            <Text wrap="truncate">
+              {i === 0 && replyPrefix ? (
+                <>
+                  <Text color={C.dim}>{replyPrefix}</Text>
+                  <Text color={contentColor}>{line.slice(replyPrefix.length)}</Text>
+                </>
+              ) : (
+                <Text color={contentColor}>{line}</Text>
+              )}
+            </Text>
+          </Box>
+        ))}
       </Box>
     );
   }
@@ -474,7 +521,7 @@ function App({
               </Box>
             );
           }
-          return <EventLine key={entry.id} event={entry.event} identify={identify} />;
+          return <EventLine key={entry.id} event={entry.event} identify={identify} cols={cols} />;
         }}
       </Static>
 

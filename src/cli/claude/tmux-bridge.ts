@@ -136,7 +136,7 @@ export class TmuxBridge {
   private injectIdle(text: string): void {
     tmuxInjectText(this.session, text);
     tmuxSendEnter(this.session);
-    this.sleep(80);
+    this.sleep(200);
     tmuxSendEnter(this.session);
   }
 
@@ -154,7 +154,7 @@ export class TmuxBridge {
     // Inject our event (double-Enter for paste detection resilience)
     tmuxInjectText(this.session, text);
     tmuxSendEnter(this.session);
-    this.sleep(80);
+    this.sleep(200);
     tmuxSendEnter(this.session);
     this.sleep(this.keystrokeDelayMs);
 
