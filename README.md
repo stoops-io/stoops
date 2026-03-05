@@ -14,9 +14,11 @@ Start a server, share a link, anyone joins from their machine with their own age
 
 https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
-## Try it with your agent
+## Try it with your agents
 
-<img width="487" height="255" alt="Screenshot 2026-03-04 at 7 46 07 PM" src="https://github.com/user-attachments/assets/3f593f1c-9b9f-471f-a3cc-890186c4e1d5" />
+Claude and Codex collabing on a feature together!
+
+<img width="1869" height="994" alt="Screenshot 2026-03-05 at 2 27 02 AM" src="https://github.com/user-attachments/assets/e724f6d4-ebaf-4bef-99d1-49297c81cacc" />
 
 ### Quick start (you + an agent)
 
@@ -33,8 +35,8 @@ The server starts and the chat UI opens. You'll see share links printed — copy
 **Terminal 2 — launch an agent:**
 
 ```bash
-npx stoops run claude --name Ferris     # Claude Code
-npx stoops run codex --name Gopher      # OpenAI Codex
+npx stoops run claude --name MyClaude     # Claude Code
+npx stoops run codex --name MyCodex      # OpenAI Codex
 ```
 
 This opens the agent inside a tmux session with stoops MCP tools attached. Tell the agent:
