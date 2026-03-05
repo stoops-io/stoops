@@ -22,6 +22,10 @@ export interface JoinOptions {
   shareUrl?: string;
   /** Skip TUI — stream events as JSON to stdout, read messages from stdin. */
   headless?: boolean;
+  /** Version string to display in the TUI banner. */
+  version?: string;
+  /** Path where room state is being saved. */
+  savePath?: string;
 }
 
 export async function join(options: JoinOptions): Promise<void> {
@@ -372,6 +376,8 @@ export async function join(options: JoinOptions): Promise<void> {
     roomName,
     readOnly: isReadOnly,
     isAdmin: authority === "admin",
+    version: options.version,
+    savePath: options.savePath,
     onSend: isReadOnly ? undefined : async (content: string) => {
       // Intercept slash commands
       if (content.startsWith("/")) {

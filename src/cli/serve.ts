@@ -58,6 +58,7 @@ export interface ServeResult {
   roomName: string;
   adminToken: string;
   memberToken: string;
+  savePath: string;
 }
 
 // ── SSE helper ───────────────────────────────────────────────────────────────
@@ -661,7 +662,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  return { serverUrl, publicUrl, roomName, adminToken, memberToken };
+  return { serverUrl, publicUrl, roomName, adminToken, memberToken, savePath };
 }
 
 // ── Server log ────────────────────────────────────────────────────────────────

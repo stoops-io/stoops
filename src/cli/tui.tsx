@@ -104,6 +104,8 @@ export interface TUIOptions {
   onCtrlC?(): void;
   readOnly?: boolean;
   isAdmin?: boolean;
+  version?: string;
+  savePath?: string;
 }
 
 // ── Identity (seed → color + sigil) ──────────────────────────────────────────
@@ -243,6 +245,8 @@ function App({
   onReady,
   readOnly,
   isAdmin,
+  version,
+  savePath,
 }: {
   roomName: string;
   onSend?: (content: string) => void;
@@ -250,6 +254,8 @@ function App({
   onReady: (handle: AppHandle) => void;
   readOnly?: boolean;
   isAdmin?: boolean;
+  version?: string;
+  savePath?: string;
 }) {
   const [events,        setEvents]        = useState<DisplayEvent[]>([]);
   const [agentNames,    setAgentNames]    = useState<string[]>([]);
@@ -453,11 +459,18 @@ function App({
                 {BANNER_LINES.map((line, i) => (
                   <Text key={i} color={GRADIENT[i]}>{line}</Text>
                 ))}
+                {version && <Text color={C.dim}>{"  v"}{version}</Text>}
                 <Text>{" "}</Text>
                 <Text>
                   <Text color={C.dim}>{"  room  "}</Text>
                   <Text color={C.cyan} bold>{roomName}</Text>
                 </Text>
+                {savePath && (
+                  <Text>
+                    <Text color={C.dim}>{"  saved "}</Text>
+                    <Text color={C.secondary}>{savePath}</Text>
+                  </Text>
+                )}
               </Box>
             );
           }
@@ -563,6 +576,8 @@ export function startTUI(opts: TUIOptions): TUIHandle {
       onReady={onReady}
       readOnly={opts.readOnly}
       isAdmin={opts.isAdmin}
+      version={opts.version}
+      savePath={opts.savePath}
     />,
     { exitOnCtrlC: false },
   );

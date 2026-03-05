@@ -11,12 +11,23 @@
  *   stoops run opencode [--name <name>] [--admin] [-- <args>]                Connect OpenCode
  */
 
+import { createRequire } from "node:module";
 import { serve } from "./serve.js";
 import { join } from "./join.js";
 import { runClaude } from "./claude/run.js";
 import { runOpencode } from "./opencode/run.js";
 import { runCodex } from "./codex/run.js";
 import { buildShareUrl } from "./auth.js";
+
+function getVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require("../../package.json");
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 const args = process.argv.slice(2);
 
@@ -150,6 +161,8 @@ async function main(): Promise<void> {
       server: adminJoinUrl,
       name: getFlag("name"),
       shareUrl: participantShareUrl,
+      version: getVersion(),
+      savePath: result.savePath,
     });
     return;
   }
