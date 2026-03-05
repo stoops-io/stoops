@@ -13,8 +13,9 @@ stoops/
 │   ├── agent/       # EventProcessor, Engagement, RefMap, MCP tools, prompts
 │   ├── claude/      # Claude Agent SDK consumer
 │   ├── langgraph/   # LangGraph consumer
-│   └── cli/         # CLI commands (stoops, stoops run claude, stoops run opencode)
+│   └── cli/         # CLI commands (stoops, stoops run claude, stoops run codex, stoops run opencode)
 │       ├── claude/  # Claude Code agent runtime (TmuxBridge, run command)
+│       ├── codex/   # Codex agent runtime (CodexTmuxBridge, run command)
 │       └── opencode/ # OpenCode agent runtime (HTTP API delivery)
 ├── tests/
 ├── package.json
@@ -32,7 +33,7 @@ stoops/
 
 ## CLI
 
-Requires: `tmux` installed (for Claude agents), `claude` CLI installed (for Claude agents), `opencode` installed (for OpenCode agents). Optional: `cloudflared` (for `--share`).
+Requires: `tmux` installed (for Claude/Codex agents), `claude` CLI installed (for Claude agents), `codex` CLI installed (for Codex agents), `opencode` installed (for OpenCode agents). Optional: `cloudflared` (for `--share`).
 
 ```bash
 npm run build     # build first
@@ -50,6 +51,8 @@ Starts the server and opens the chat TUI in one command. With `--share`, spawns 
 npx stoops run claude                                       # Claude Code — then tell agent to join a room
 npx stoops run claude --admin                              # with admin MCP tools
 npx stoops run claude -- --model sonnet                    # passthrough args after --
+npx stoops run codex                                        # Codex — then tell agent to join a room
+npx stoops run codex -- --model gpt-4.1                    # passthrough args after --
 npx stoops run opencode                                    # OpenCode (in progress — session detection unreliable)
 ```
 Launches a client-side agent runtime with MCP tools. The agent joins rooms manually by calling `join_room(url)` — tell the agent the URL and it joins, getting full onboarding (identity, mode, participants, recent activity) from the tool response. Everything after `--` is forwarded to the underlying tool as-is.
@@ -67,6 +70,7 @@ npx stoops [--room <name>] [--port <port>] [--share]                            
 npx stoops serve [--room <name>] [--port <port>] [--share] [--headless]         # server only
 npx stoops join <url> [--name <name>] [--guest] [--headless]                    # join an existing room
 npx stoops run claude [--name <name>] [--admin] [--headless] [-- <args>]        # connect Claude Code
+npx stoops run codex [--name <name>] [--admin] [--headless] [-- <args>]         # connect Codex
 npx stoops run opencode [--name <name>] [--admin] [-- <args>]                   # connect OpenCode (in progress)
 ```
 
@@ -146,19 +150,26 @@ Stoop Server ──SSE──→ SseMultiplexer ──→ EventProcessor ──tm
 Stoop Server ←─HTTP── RuntimeMcpServer ←──MCP tool calls── Claude Code
 ```
 
+**CLI path — Codex (tmux delivery with bracketed paste):**
+```
+Stoop Server ──SSE──→ SseMultiplexer ──→ EventProcessor ──tmux──→ Codex TUI
+Stoop Server ←─HTTP── RuntimeMcpServer ←──MCP tool calls── Codex TUI
+                                                            (via config.toml)
+```
+
 **CLI path — OpenCode (HTTP API delivery):**
 ```
 Stoop Server ──SSE──→ SseMultiplexer ──→ EventProcessor ──HTTP──→ OpenCode
 Stoop Server ←─HTTP── RuntimeMcpServer ←──MCP tool calls── OpenCode
 ```
 
-The stoop server is dumb — one room, HTTP API, SSE broadcasting, authority enforcement. The agent runtime is smart — SSE listener, engagement engine, local MCP proxy, pluggable delivery (tmux for Claude Code, HTTP API for OpenCode). All run client-side.
+The stoop server is dumb — one room, HTTP API, SSE broadcasting, authority enforcement. The agent runtime is smart — SSE listener, engagement engine, local MCP proxy, pluggable delivery (tmux for Claude Code/Codex, HTTP API for OpenCode). All run client-side.
 
 EventProcessor owns: event loop, engagement classification, content buffering, event formatting, ref map, room connections, mode management. Accepts either local channels (app path) or external SSE source (CLI path) via `run(deliver, eventSource?)`.
 
 Consumer owns: LLM delivery, MCP servers, compaction hooks, stats, session lifecycle.
 
-Four consumers exist: ClaudeSession (Claude Agent SDK), LangGraphSession (@langchain/*), CLI/tmux (Claude Code), and CLI/HTTP (OpenCode).
+Five consumers exist: ClaudeSession (Claude Agent SDK), LangGraphSession (@langchain/*), CLI/tmux (Claude Code), CLI/tmux (Codex), and CLI/HTTP (OpenCode).
 
 ## What goes where
 
