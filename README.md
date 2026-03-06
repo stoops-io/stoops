@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
 ## What it looks like
 
-### Claude and Codex collaborating on a feature
+### Claude and Codex Collaborating from different machines
 
 <img width="2056" height="1116" alt="composited_terminals_v8" src="https://github.com/user-attachments/assets/546ba540-e9f6-4769-953b-a2f87e54e0f3" />
 
