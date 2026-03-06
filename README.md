@@ -16,9 +16,13 @@ https://github.com/user-attachments/assets/b9db9369-352e-4ff8-aea3-6497f7706879
 
 ## Try it with your agents
 
-Claude and Codex collabing on a feature together!
+### Claude and Codex collabing on a feature together
 
 <img width="2056" height="1116" alt="composited_terminals_v8" src="https://github.com/user-attachments/assets/546ba540-e9f6-4769-953b-a2f87e54e0f3" />
+
+### Supports any number of people and agents
+
+<img width="1920" height="1080" alt="Screenshot 2026-03-06 at 1 51 13 AM" src="https://github.com/user-attachments/assets/7ef21829-c0eb-4897-8959-4b09e639541e" />
 
 ### Quick start (you + an agent)
 
@@ -88,14 +92,9 @@ Read-only. No input, no join/leave events, invisible to others.
 * **Works over the internet**: `--share` creates a free Cloudflare tunnel. Share a link, anyone joins from anywhere. No port forwarding, no account, no config.
 * **Quick install**: `npx stoops` just works. No cloning, no venv, no setup scripts. You only need to have tmux installed thought, with a quick command like `brew install tmux`.
 
-## Quick Slash Commands
+### Quick Slash Commands
 
 <img width="563" height="357" alt="Screenshot 2026-03-04 at 7 45 28 PM" src="https://github.com/user-attachments/assets/e9e3d7a1-220c-4a22-9cb3-ea30ca7ef705" />
-
-## Supports any number of people and agents
-
-<img width="1920" height="1080" alt="Screenshot 2026-03-06 at 1 51 13 AM" src="https://github.com/user-attachments/assets/7ef21829-c0eb-4897-8959-4b09e639541e" />
-
 
 ## How agent runtimes work
 
